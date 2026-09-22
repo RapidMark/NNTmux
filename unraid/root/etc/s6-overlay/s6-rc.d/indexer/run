@@ -1,0 +1,9 @@
+#!/command/with-contenv bash
+if [ "${START_INDEXER:-true}" != "true" ]; then
+    echo "START_INDEXER=${START_INDEXER}, indexer not started"
+    s6-svc -O .
+    exit 0
+fi
+cd /app
+export HOME=/config TERM=xterm-256color
+exec s6-setuidgid www-data /app/deploy/cloud/tmux.sh

@@ -1,0 +1,2 @@
+#!/command/with-contenv bash
+exec s6-softlimit -o 65535 s6-setuidgid www-data searchd --config /etc/manticoresearch/manticore.conf --nodetach

@@ -48,3 +48,5 @@ deploy/cloud/*
 !deploy/cloud/configure.php
 !deploy/cloud/health.php
 !deploy/cloud/process-health.php
+
+unraid/

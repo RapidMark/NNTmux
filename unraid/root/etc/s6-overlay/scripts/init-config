@@ -1,0 +1,105 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+groupmod -o -g "${PGID}" www-data
+usermod -o -u "${PUID}" www-data
+echo "www-data uid: $(id -u www-data) gid: $(id -g www-data)"
+
+ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+echo "${TZ}" > /etc/timezone
+printf '%s' "${APP_TIMEZONE:-${TZ}}" > /run/s6/container_environment/APP_TIMEZONE
+
+if [ ! -f /config/install/install.lock ]; then
+    admin_pass="${ADMIN_PASS:-}"
+    if [ "${#admin_pass}" -lt 12 ] || [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_EMAIL:-}" ]; then
+        echo "First run needs ADMIN_USER, ADMIN_EMAIL and an ADMIN_PASS of at least 12 characters." >&2
+        exit 1
+    fi
+    if [ -z "${NNTP_SERVER:-}" ] || [ -z "${NNTP_USERNAME:-}" ] || [ -z "${NNTP_PASSWORD:-}" ]; then
+        echo "First run needs NNTP_SERVER, NNTP_USERNAME and NNTP_PASSWORD." >&2
+        exit 1
+    fi
+fi
+
+mkdir -p /config/mariadb /config/redis /config/manticore/data /config/install /config/storage \
+    /config/caddy/config /config/caddy/data /data/nzb /data/covers
+install -d -o www-data -g www-data /run/mysqld
+
+# Move the app's writable state onto the persistent volumes.
+if [ ! -d /config/storage/framework ]; then
+    cp -a /app/storage/. /config/storage/
+fi
+for d in app/public framework/cache/data framework/sessions framework/views logs tmp/unrar tmp/unzip; do
+    mkdir -p "/config/storage/${d}"
+done
+for big in covers nzb; do
+    if [ -d "/config/storage/${big}" ] && [ ! -L "/config/storage/${big}" ]; then
+        cp -a "/config/storage/${big}/." "/data/${big}/"
+        rm -rf "/config/storage/${big}"
+    fi
+    ln -snf "/data/${big}" "/config/storage/${big}"
+done
+if [ ! -L /app/storage ]; then
+    rm -rf /app/storage
+    ln -s /config/storage /app/storage
+fi
+if [ ! -L /app/_install ]; then
+    rm -rf /app/_install
+    ln -s /config/install /app/_install
+fi
+
+if [ ! -f /config/.env ]; then
+    echo "Generating /config/.env"
+    app_key="base64:$(head -c 32 /dev/urandom | base64)"
+    db_pass="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
+    cat > /config/.env <<ENV
+# Generated on first run. Container environment variables override anything set here.
+APP_ENV=production
+APP_DEBUG=false
+APP_KEY=${app_key}
+APP_URL=http://localhost
+
+DB_CONNECTION=mariadb
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=nntmux
+DB_USERNAME=nntmux
+DB_PASSWORD=${db_pass}
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=null
+REDIS_CLIENT=phpredis
+CACHE_STORE=redis
+QUEUE_CONNECTION=redis
+SESSION_DRIVER=redis
+
+SEARCH_DRIVER=manticore
+MANTICORESEARCH_HOST=127.0.0.1
+MANTICORESEARCH_PORT=9308
+MANTICORESEARCH_SCHEME=http
+
+COVERS_PATH=/data/covers
+PATH_TO_NZBS=/data/nzb
+TEMP_UNRAR_PATH=/app/storage/tmp/unrar
+TEMP_UNZIP_PATH=/app/storage/tmp/unzip
+UNRAR_PATH=/usr/bin/unrar
+UNZIP_PATH=/usr/bin/unzip
+FFMPEG_PATH=/usr/bin/ffmpeg
+MEDIAINFO_PATH=/usr/bin/mediainfo
+LAME_PATH=/usr/bin/lame
+TIMEOUT_PATH=/usr/bin/timeout
+MAGIC_FILE_PATH=/usr/share/misc/magic.mgc
+ENV
+    chmod 600 /config/.env
+fi
+ln -sfn /config/.env /app/.env
+
+# Ownership pass only when PUID/PGID change; covers and nzbs can be huge.
+marker=/config/.owner
+if [ ! -f "${marker}" ] || [ "$(cat "${marker}")" != "${PUID}:${PGID}" ]; then
+    echo "Setting ownership of /config and /data to ${PUID}:${PGID}"
+    chown -R "${PUID}:${PGID}" /config /data
+    echo "${PUID}:${PGID}" > "${marker}"
+fi
+chown -R www-data:www-data /app/bootstrap/cache

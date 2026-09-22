@@ -1,0 +1,35 @@
+name: unraid_ci
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'unraid/**'
+      - '.github/workflows/unraid_*.yml'
+  workflow_dispatch:
+
+jobs:
+  super_linter:
+    runs-on: ubuntu-latest
+    name: super_linter
+
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Super-linter
+        uses: super-linter/super-linter/slim@v8.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILTER_REGEX_INCLUDE: '(unraid/.*|\.github/workflows/unraid_.*)'
+          VALIDATE_BASH: true
+          VALIDATE_DOCKERFILE_HADOLINT: true
+          VALIDATE_GITHUB_ACTIONS: true
+          VALIDATE_ALL_CODEBASE: true
+          DISABLE_ERRORS: true

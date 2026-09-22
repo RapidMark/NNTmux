@@ -1,0 +1,42 @@
+#!/command/with-contenv bash
+set -euo pipefail
+cd /app
+export HOME=/config
+
+wait_for() {
+    local name=$1; shift
+    for _ in $(seq 1 120); do
+        "$@" >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    echo "${name} did not become ready" >&2
+    exit 1
+}
+wait_for mariadb mariadb-admin --protocol=socket --socket=/run/mysqld/mysqld.sock ping
+wait_for redis redis-cli -h 127.0.0.1 ping
+wait_for manticore curl -fs http://127.0.0.1:9308/
+
+setting() { printenv "$1" 2>/dev/null || sed -n "s/^$1=//p" /config/.env; }
+as_app() { s6-setuidgid www-data "$@"; }
+
+if [ ! -f /config/install/install.lock ]; then
+    db_name=$(setting DB_DATABASE)
+    db_user=$(setting DB_USERNAME)
+    db_pass=$(setting DB_PASSWORD)
+    mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock <<SQL
+CREATE DATABASE IF NOT EXISTS \`${db_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${db_user}'@'localhost' IDENTIFIED BY '${db_pass}';
+CREATE USER IF NOT EXISTS '${db_user}'@'127.0.0.1' IDENTIFIED BY '${db_pass}';
+GRANT ALL ON \`${db_name}\`.* TO '${db_user}'@'localhost', '${db_user}'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+    echo "First run: initialising the database and search indexes, this takes a few minutes"
+    as_app php artisan config:clear
+    as_app php artisan nntmux:deploy-init --no-interaction
+fi
+
+as_app php artisan config:cache
+as_app php artisan route:cache
+as_app php artisan view:cache
+as_app php artisan event:cache
+as_app php artisan data:cache-structures
