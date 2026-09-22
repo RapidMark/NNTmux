@@ -2,7 +2,7 @@
 set -euo pipefail
 
 groupmod -o -g "${PGID}" www-data
-usermod -o -u "${PUID}" www-data
+usermod -o -u "${PUID}" -s /bin/bash www-data
 echo "www-data uid: $(id -u www-data) gid: $(id -g www-data)"
 
 ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime
