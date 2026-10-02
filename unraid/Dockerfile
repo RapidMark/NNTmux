@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends xz-utils wget g
     && wget -qO /tmp/manticore-repo.deb https://repo.manticoresearch.com/manticore-repo.noarch.deb \
     && dpkg -i /tmp/manticore-repo.deb && rm /tmp/manticore-repo.deb \
     && apt-get update && apt-get install -y --no-install-recommends mariadb-server mariadb-client manticore \
+    && apt-get upgrade -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/

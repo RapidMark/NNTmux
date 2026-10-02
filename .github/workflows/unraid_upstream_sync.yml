@@ -1,4 +1,4 @@
-name: Sync from upstream
+name: Weekly update check
 
 on:
   schedule:
@@ -10,17 +10,37 @@ permissions:
   actions: write
 
 jobs:
-  sync:
-    name: Merge NNTmux/newznab-tmux master
+  check:
+    name: Upstream, base image and security updates
     runs-on: ubuntu-latest
     steps:
-      - name: Sync fork
+      - name: Sync fork from NNTmux/newznab-tmux
+        id: sync
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           type=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=master --jq .merge_type)
-          echo "merge_type: ${type}"
-          # Only rebuild the image when upstream actually changed something.
-          if [ "${type}" != "none" ]; then
-            gh workflow run unraid_build_push.yml --repo "${GITHUB_REPOSITORY}" --ref master
-          fi
+          echo "upstream merge: ${type}"
+          [ "${type}" != "none" ] && echo "rebuild=true" >> "$GITHUB_OUTPUT" || true
+
+      - name: Check base image and packages
+        id: base
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/nntmux:latest
+          BASE: dunglas/frankenphp:1-php8.5-bookworm
+        run: |
+          docker pull -q "${IMAGE}" >/dev/null
+          docker pull -q "${BASE}" >/dev/null
+          ours=$(date -d "$(docker image inspect -f '{{.Created}}' "${IMAGE}")" +%s)
+          base=$(date -d "$(docker image inspect -f '{{.Created}}' "${BASE}")" +%s)
+          updates=$(docker run --rm --user root --entrypoint sh "${IMAGE}" -c \
+            'apt-get update -qq >/dev/null 2>&1; apt list --upgradable 2>/dev/null' | grep -E 'security|mariadb|manticore|redis' || true)
+          echo "base image newer: $([ "${base}" -gt "${ours}" ] && echo yes || echo no)"
+          echo "security updates: ${updates:-none}"
+          if [ "${base}" -gt "${ours}" ] || [ -n "${updates}" ]; then echo "rebuild=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Build image
+        if: steps.sync.outputs.rebuild == 'true' || steps.base.outputs.rebuild == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run unraid_build_push.yml --repo "${GITHUB_REPOSITORY}" --ref master
