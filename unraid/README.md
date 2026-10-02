@@ -28,7 +28,7 @@ Edit `.env` for API keys or anything the template does not expose, then restart.
 
 ## Unraid
 
-Add a container with template URL `https://raw.githubusercontent.com/RapidMark/NNTmux/master/unraid/nntmux.xml`, or copy `nntmux.xml` to `/boot/config/plugins/dockerMan/templates-user/`.
+Install from Community Apps, or add a container with template URL `https://raw.githubusercontent.com/RapidMark/unraid-templates/main/templates/nntmux.xml`.
 The template passes `--stop-timeout 120` so MariaDB gets a clean shutdown.
 
 ## Building
