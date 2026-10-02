@@ -30,7 +30,7 @@ RUN chmod +x /etc/s6-overlay/scripts/* /etc/s6-overlay/s6-rc.d/*/run
 
 ENV PUID=99 PGID=100 UMASK=002 TZ=Etc/UTC \
     START_INDEXER=true \
-    CHECK_PASSWORDED_RARS=true ADD_PAR2=true PULSE_ENABLED=false FIX_NAMES=true \
+    CHECK_PASSWORDED_RARS=true ADD_PAR2=true PULSE_ENABLED=false FIX_NAMES=true MIN_RELEASE_SIZE_MB=50 \
     XDG_CONFIG_HOME=/config/caddy/config XDG_DATA_HOME=/config/caddy/data \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 S6_BEHAVIOUR_IF_STAGE2_FAILS=2 S6_VERBOSITY=1
 

@@ -45,6 +45,7 @@ as_app php artisan data:cache-structures
 ui=()
 [ -n "${FIX_NAMES:-}" ] && ui+=("'fix_names' => '$([ "${FIX_NAMES}" = true ] && echo 1 || echo 0)'")
 [ -n "${SCRAPE_IRC_USERNAME:-}" ] && ui+=("'run_ircscraper' => '1'")
+[ -n "${MIN_RELEASE_SIZE_MB:-}" ] && ui+=("'minsizetoformrelease' => '$(( MIN_RELEASE_SIZE_MB * 1048576 ))'")
 if [ ${#ui[@]} -gt 0 ]; then
     as_app php artisan tinker --execute="App\Models\Settings::settingsUpdate([$(IFS=,; echo "${ui[*]}")]);"
 fi
