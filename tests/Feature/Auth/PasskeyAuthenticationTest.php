@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Auth;
 
+use App\Enums\UserRole;
 use App\Events\UserLoggedIn;
 use App\Http\Middleware\Google2FAMiddleware;
+use App\Models\PasswordSecurity;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Spatie\LaravelPasskeys\Actions\FindPasskeyToAuthenticateAction;
 use Spatie\LaravelPasskeys\Models\Passkey;
@@ -42,8 +45,16 @@ class PasskeyAuthenticationTest extends TestCase
 
     public function test_passkey_authentication_logs_user_in_and_sets_2fa_session_flag(): void
     {
+        $this->withMiddleware(Google2FAMiddleware::class);
+        config(['google2fa.enabled' => true, 'google2fa.lifetime' => 5]);
+        Route::middleware(['web', 'auth', '2fa'])->get('__passkey_otp_probe', fn () => response('passkey passed'));
         Event::fake([UserLoggedIn::class]);
         $user = $this->createUser('passkey-user@example.test');
+        PasswordSecurity::query()->create([
+            'user_id' => $user->id,
+            'google2fa_enable' => true,
+            'google2fa_secret' => 'JBSWY3DPEHPK3PXP',
+        ]);
 
         $passkey = new Passkey;
         $passkey->setRawAttributes([
@@ -59,16 +70,23 @@ class PasskeyAuthenticationTest extends TestCase
         config()->set('passkeys.actions.find_passkey', FakeFindPasskeyAction::class);
 
         $response = $this
-            ->withSession(['passkey-authentication-options' => '{}'])
+            ->withSession(['passkey-authentication-options' => '{}', 'passkeys.redirect' => '/__passkey_otp_probe'])
             ->post(route('passkeys.login'), [
                 'start_authentication_response' => json_encode(['id' => 'credential-1'], JSON_THROW_ON_ERROR),
                 'remember' => false,
             ]);
 
-        $response->assertRedirect('/');
+        $response->assertRedirect('/__passkey_otp_probe');
         $response->assertCookieMissing(Auth::guard()->getRecallerName());
+        $response->assertCookieMissing('2fa_trusted_device');
         $this->assertAuthenticatedAs($user);
-        $this->assertTrue((bool) session(config('google2fa.session_var')));
+        $this->assertTrue((bool) session(config('google2fa.session_var').'.auth_passed'));
+        $response->assertSessionHas('google2fa.auth_time');
+        $cookie = $response->getCookie(config('session.cookie'), decrypt: false);
+        $this->assertNotNull($cookie);
+        Auth::forgetGuards();
+        $this->withUnencryptedCookie($cookie->getName(), $cookie->getValue())
+            ->get('/__passkey_otp_probe')->assertOk()->assertSeeText('passkey passed');
         Event::assertDispatched(UserLoggedIn::class);
     }
 
@@ -103,6 +121,40 @@ class PasskeyAuthenticationTest extends TestCase
         $this->assertNotNull($user->fresh()?->remember_token);
     }
 
+    public function test_passkey_authentication_records_the_client_ip_when_ip_storage_is_enabled(): void
+    {
+        Event::fake([UserLoggedIn::class]);
+        config()->set('nntmux_settings.store_user_ip', true);
+        $user = $this->createUser('passkey-ip-address@example.test');
+
+        $passkey = new Passkey;
+        $passkey->setRawAttributes([
+            'id' => 4,
+            'authenticatable_id' => $user->id,
+            'name' => 'Security key',
+            'credential_id' => 'credential-4',
+            'data' => '{}',
+        ], true);
+        $passkey->setRelation('authenticatable', $user);
+
+        FakeFindPasskeyAction::$passkey = $passkey;
+        config()->set('passkeys.actions.find_passkey', FakeFindPasskeyAction::class);
+
+        $this
+            ->withServerVariables(['REMOTE_ADDR' => '203.0.113.43'])
+            ->withSession(['passkey-authentication-options' => '{}'])
+            ->post(route('passkeys.login'), [
+                'start_authentication_response' => json_encode(['id' => 'credential-4'], JSON_THROW_ON_ERROR),
+                'remember' => false,
+            ])
+            ->assertRedirect('/');
+
+        Event::assertDispatched(
+            UserLoggedIn::class,
+            fn (UserLoggedIn $event): bool => $event->user->is($user) && $event->ip === '203.0.113.43'
+        );
+    }
+
     public function test_unverified_users_cannot_authenticate_with_passkeys(): void
     {
         $user = $this->createUser('unverified@example.test', false);
@@ -128,7 +180,40 @@ class PasskeyAuthenticationTest extends TestCase
 
         $response->assertRedirect(route('login'));
         $this->assertGuest();
-        $this->assertSame('You have not verified your email address!', session('authenticatePasskey::message'));
+        $this->assertSame('ineligible_account', session('authenticatePasskey::reason'));
+    }
+
+    public function test_disabled_users_cannot_authenticate_with_passkeys(): void
+    {
+        Event::fake([UserLoggedIn::class]);
+        $user = $this->createUser('disabled@example.test');
+        $user->forceFill(['roles_id' => UserRole::DISABLED->value])->save();
+
+        $passkey = new Passkey;
+        $passkey->setRawAttributes([
+            'id' => 5,
+            'authenticatable_id' => $user->id,
+            'name' => 'Suspended key',
+            'credential_id' => 'credential-5',
+            'data' => '{}',
+        ], true);
+        $passkey->setRelation('authenticatable', $user->fresh());
+
+        FakeFindPasskeyAction::$passkey = $passkey;
+        config()->set('passkeys.actions.find_passkey', FakeFindPasskeyAction::class);
+
+        $response = $this
+            ->from(route('login'))
+            ->withSession(['passkey-authentication-options' => '{}'])
+            ->post(route('passkeys.login'), [
+                'start_authentication_response' => json_encode(['id' => 'credential-5'], JSON_THROW_ON_ERROR),
+            ]);
+
+        $response->assertRedirect(route('login'));
+        $this->assertGuest();
+        $this->assertSame('ineligible_account', session('authenticatePasskey::reason'));
+        Event::assertNotDispatched(UserLoggedIn::class);
+        $this->assertNull($user->fresh()?->session_token);
     }
 
     public function test_passkey_authentication_without_session_options_redirects_with_message(): void
@@ -147,6 +232,13 @@ class PasskeyAuthenticationTest extends TestCase
 
     protected function createSchema(): void
     {
+        Schema::create('password_securities', function (Blueprint $table): void {
+            $table->increments('id');
+            $table->unsignedInteger('user_id');
+            $table->boolean('google2fa_enable')->default(false);
+            $table->string('google2fa_secret')->nullable();
+            $table->timestamps();
+        });
         Schema::create('settings', function (Blueprint $table): void {
             $table->string('name')->primary();
             $table->text('value')->nullable();

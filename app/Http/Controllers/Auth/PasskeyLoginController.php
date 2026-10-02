@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use PragmaRX\Google2FALaravel\Facade as Google2FA;
 use Spatie\LaravelPasskeys\Actions\FindPasskeyToAuthenticateAction;
 use Spatie\LaravelPasskeys\Events\PasskeyUsedToAuthenticateEvent;
 use Spatie\LaravelPasskeys\Http\Requests\AuthenticateUsingPasskeysRequest;
@@ -83,25 +84,13 @@ final class PasskeyLoginController extends Controller
 
         $user = $passkey->authenticatable;
 
-        if ($user->trashed()) {
+        if (! $user->isEligibleForAuthentication()) {
             Log::channel('failed_login')->error(
-                'Failed passkey login for deactivated user: '.$user->username.' from IP address: '.$request->ip()
+                'Failed passkey login for ineligible user: '.$user->username.' from IP address: '.$request->ip()
             );
 
-            session()->flash(
-                'authenticatePasskey::message',
-                'This account has been deactivated. Please contact us through contact form to have your account reactivated.'
-            );
-
-            return back();
-        }
-
-        if (! $user->hasVerifiedEmail()) {
-            Log::channel('failed_login')->error(
-                'Failed passkey login for unverified user: '.$user->username.' from IP address: '.$request->ip()
-            );
-
-            session()->flash('authenticatePasskey::message', 'You have not verified your email address!');
+            session()->flash('authenticatePasskey::message', __('passkeys::passkeys.invalid'));
+            session()->flash('authenticatePasskey::reason', 'ineligible_account');
 
             return back();
         }
@@ -120,10 +109,10 @@ final class PasskeyLoginController extends Controller
         event(new OtherDeviceLogout(Auth::getDefaultDriver(), $user));
 
         // Passkey auth is treated as sufficient MFA, so skip additional OTP gate.
-        session([config('google2fa.session_var') => true]);
-        session([config('google2fa.session_var').'.auth.passed_at' => time()]);
+        $request->session()->forget('2fa:trusted_device');
+        Google2FA::boot($request)->login();
 
-        $userIp = config('nntmux:settings.store_user_ip') ? ($request->ip() ?? $request->getClientIp()) : '';
+        $userIp = config('nntmux_settings.store_user_ip') ? ($request->ip() ?? $request->getClientIp()) : '';
         event(new UserLoggedIn($user, $userIp));
         event(new PasskeyUsedToAuthenticateEvent($passkey, $request));
 

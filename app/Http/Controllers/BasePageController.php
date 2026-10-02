@@ -176,6 +176,22 @@ class BasePageController extends Controller
         return is_scalar($value) ? (string) $value : $default;
     }
 
+    /**
+     * Resolve a legacy form action while preventing mutation actions on GET requests.
+     *
+     * @param  list<string>  $allowedReadActions
+     */
+    protected function formAction(Request $request, array $allowedReadActions = ['view']): string
+    {
+        $action = $this->scalarInput($request, 'action', 'view');
+
+        if (! $request->isMethod('post') && ! in_array($action, $allowedReadActions, true)) {
+            return 'view';
+        }
+
+        return $action;
+    }
+
     protected function integerInput(Request $request, string $key, int $default = 0): int
     {
         $value = $this->scalarInput($request, $key, (string) $default);
@@ -195,13 +211,25 @@ class BasePageController extends Controller
 
     protected function localReturnUrl(Request $request, string $fallback, string $key = 'from'): string
     {
-        $from = $this->scalarInput($request, $key);
-        if ($from === '') {
+        $from = trim($this->scalarInput($request, $key));
+        if ($from === '' || preg_match('/[\\x00-\\x20\\x7f\\\\\\\\]/', $from) === 1 || str_starts_with($from, '//')) {
             return url($fallback);
         }
 
-        if (filter_var($from, FILTER_VALIDATE_URL) !== false) {
-            return parse_url($from, PHP_URL_HOST) === $request->getHost() ? $from : url($fallback);
+        $parts = parse_url($from);
+        if ($parts === false) {
+            return url($fallback);
+        }
+
+        if (isset($parts['scheme']) || isset($parts['host'])) {
+            $scheme = strtolower($parts['scheme'] ?? '');
+            $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
+            $sameOrigin = $scheme === $request->getScheme()
+                && strtolower($parts['host'] ?? '') === strtolower($request->getHost())
+                && $port === $request->getPort()
+                && ! isset($parts['user']) && ! isset($parts['pass']);
+
+            return $sameOrigin ? $from : url($fallback);
         }
 
         return url($from);

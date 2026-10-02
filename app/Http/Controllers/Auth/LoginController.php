@@ -11,6 +11,7 @@ use App\Models\TrustedDevice;
 use App\Models\User;
 use App\Services\PasswordBreachService;
 use App\Support\Auth\AuthenticatesUsers;
+use App\Support\Google2FAAuthenticator;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Auth\Events\OtherDeviceLogout;
 use Illuminate\Contracts\Foundation\Application;
@@ -104,7 +105,7 @@ class LoginController extends Controller
             /** @var User $user */
             $user = Auth::user();
 
-            if ($user->is_disabled || ! $user->hasVerifiedEmail()) {
+            if (! $user->isEligibleForAuthentication()) {
                 Auth::logout();
                 $this->incrementLoginAttempts($request);
                 Log::channel('failed_login')->error('Failed login attempt by user: '.$request->input('username').' from IP address: '.$request->ip());
@@ -115,15 +116,16 @@ class LoginController extends Controller
 
             $request->session()->regenerate();
 
-            $userIp = config('nntmux:settings.store_user_ip') ? ($request->ip() ?? $request->getClientIp()) : '';
+            $userIp = config('nntmux_settings.store_user_ip') ? ($request->ip() ?? $request->getClientIp()) : '';
             event(new UserLoggedIn($user, $userIp));
 
             $passwordBreached = $this->isPasswordBreached((string) $request->input('password'));
 
             if ($this->userRequiresTwoFactor($user)) {
                 if ($this->trustedDeviceCookieIsValid($request, $user)) {
-                    session([config('google2fa.session_var') => true]);
-                    session([config('google2fa.session_var').'.auth.passed_at' => time()]);
+                    $authenticator = app(Google2FAAuthenticator::class);
+                    $authenticator->boot($request);
+                    $authenticator->loginFromTrustedDevice();
 
                     Auth::logoutOtherDevices((string) $request->input('password'));
                     $this->rotateSessionTokenForCurrentSession($request, $user);
@@ -290,13 +292,7 @@ class LoginController extends Controller
         }
 
         try {
-            $cookieData = json_decode($trustedCookie, true);
-
-            return json_last_error() === JSON_ERROR_NONE
-                && isset($cookieData['user_id'], $cookieData['token'], $cookieData['expires_at'])
-                && (int) $cookieData['user_id'] === (int) $user->id
-                && time() <= (int) $cookieData['expires_at']
-                && TrustedDevice::findValidForUser((int) $user->id, (string) $cookieData['token']) !== null;
+            return TrustedDevice::cookieIsValidForUser($trustedCookie, (int) $user->id);
         } catch (\Exception $e) {
             Log::error('Login - Error processing trusted device cookie', [
                 'error' => $e->getMessage(),
@@ -308,6 +304,11 @@ class LoginController extends Controller
 
     private function rotateSessionTokenForCurrentSession(Request $request, User $user): void
     {
+        $request->session()->put(
+            'password_hash_'.Auth::getDefaultDriver(),
+            Auth::hashPasswordForCookie($user->getAuthPassword())
+        );
+
         $newSessionToken = Str::random(60);
 
         $user->forceFill([
