@@ -1,0 +1,20 @@
+name: Sync from upstream
+
+on:
+  schedule:
+    - cron: '0 18 * * 5' # Friday 18:00 UTC, an hour before the Unraid image build
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Merge NNTmux/newznab-tmux master
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync fork
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=master
