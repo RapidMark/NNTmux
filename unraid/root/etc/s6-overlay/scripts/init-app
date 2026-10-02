@@ -40,3 +40,11 @@ as_app php artisan route:cache
 as_app php artisan view:cache
 as_app php artisan event:cache
 as_app php artisan data:cache-structures
+
+# Template switches for settings that otherwise live in Admin, Tmux.
+ui=()
+[ -n "${FIX_NAMES:-}" ] && ui+=("'fix_names' => '$([ "${FIX_NAMES}" = true ] && echo 1 || echo 0)'")
+[ -n "${SCRAPE_IRC_USERNAME:-}" ] && ui+=("'run_ircscraper' => '1'")
+if [ ${#ui[@]} -gt 0 ]; then
+    as_app php artisan tinker --execute="App\Models\Settings::settingsUpdate([$(IFS=,; echo "${ui[*]}")]);"
+fi
