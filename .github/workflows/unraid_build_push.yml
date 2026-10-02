@@ -1,9 +1,7 @@
 name: Build and Push Unraid Image
 
 on:
-  schedule:
-    - cron: '0 19 * * 5' # At 19:00 on Friday UTC
-  workflow_dispatch:
+  workflow_dispatch: # also started by the upstream sync when it merges something
   push:
     branches:
       - master

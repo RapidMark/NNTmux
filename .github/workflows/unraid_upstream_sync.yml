@@ -2,11 +2,12 @@ name: Sync from upstream
 
 on:
   schedule:
-    - cron: '0 18 * * 5' # Friday 18:00 UTC, an hour before the Unraid image build
+    - cron: '0 18 * * 5' # Friday 18:00 UTC
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -17,4 +18,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=master
+          type=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=master --jq .merge_type)
+          echo "merge_type: ${type}"
+          # Only rebuild the image when upstream actually changed something.
+          if [ "${type}" != "none" ]; then
+            gh workflow run unraid_build_push.yml --repo "${GITHUB_REPOSITORY}" --ref master
+          fi
