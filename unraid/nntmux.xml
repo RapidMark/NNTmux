@@ -14,7 +14,7 @@ First run creates the database and admin user from the variables below, so fill 
   <Category>Downloaders: Tools:</Category>
   <WebUI>http://[IP]:[PORT:80]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/RapidMark/NNTmux/master/unraid/nntmux.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/RapidMark/NNTmux/master/public/favicon.ico</Icon>
+  <Icon>https://raw.githubusercontent.com/RapidMark/NNTmux/master/unraid/nntmux_icon.png</Icon>
   <ExtraParams>--stop-timeout 120</ExtraParams>
   <Config Name="WebUI" Target="80" Default="8085" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false">8085</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/nntmux" Mode="rw" Description="Settings, database, Redis and Manticore data" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nntmux</Config>
