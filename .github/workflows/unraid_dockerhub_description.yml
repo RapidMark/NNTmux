@@ -1,0 +1,27 @@
+name: Docker Hub description
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'unraid/DOCKERHUB.md'
+      - '.github/workflows/unraid_dockerhub_description.yml'
+  workflow_dispatch:
+
+jobs:
+  description:
+    name: Update Docker Hub page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Update description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/nntmux
+          short-description: 'NNTmux Usenet indexer in one container: web UI, MariaDB, Redis, Manticore and the indexer.'
+          readme-filepath: ./unraid/DOCKERHUB.md
