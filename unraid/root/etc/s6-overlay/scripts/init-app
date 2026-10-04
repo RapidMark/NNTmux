@@ -35,6 +35,10 @@ SQL
     as_app php artisan nntmux:deploy-init --no-interaction
 fi
 
+# Release processing matches every new name against predb.filename; unindexed it scans millions of rows.
+mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock "$(setting DB_DATABASE)" \
+    -e "CREATE INDEX IF NOT EXISTS ix_predb_filename ON predb (filename)"
+
 as_app php artisan config:cache
 as_app php artisan route:cache
 as_app php artisan view:cache
