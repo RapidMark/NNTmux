@@ -12,6 +12,8 @@ Single-container build of [NNTmux](https://github.com/NNTmux/newznab-tmux). The 
 | scheduler | `artisan schedule:work`                                  |
 | indexer   | tmux processing engine, `START_INDEXER=false` to skip it |
 
+Tips and lessons learned (PreDB, hashed names, threads, backfill): [unraid-notes/NNTmux](https://github.com/RapidMark/unraid-notes/tree/main/NNTmux)
+
 ## Volumes
 
 - `/config` holds `.env`, MariaDB, Redis, Manticore, Laravel storage and the install lock.
@@ -39,10 +41,14 @@ make build     # nntmux-app:build from ../Dockerfile, then rapidmark/nntmux:dev
 make lint
 ```
 
-CI builds weekly and on pushes touching `unraid/`, then pushes `rapidmark/nntmux:latest`, `:bookworm_<date>` and `:sha-<short>`.
+CI builds on pushes touching `unraid/` and when the weekly check finds something new, then pushes `rapidmark/nntmux:latest`, `:bookworm_<date>` and `:sha-<short>`.
+The weekly check (Friday 18:00 UTC) merges upstream, compares the base image and looks for security updates; it only builds if one of them changed.
+`DOCKERHUB.md` is the Docker Hub page and is published on its own when it changes.
 Needs the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repo secrets.
 
 ## Updating upstream
+
+The weekly check merges upstream automatically. To do it by hand, run the **Weekly update check** workflow, or:
 
 ```
 git fetch upstream
