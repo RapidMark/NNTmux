@@ -23,7 +23,7 @@ const IMPACT_BADGE_CLASSES = {
     minor: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200',
 };
 const SYSTEM_SERVICE_SLUGS = ['database', 'redis', 'queue', 'disk'];
-// Mirror of \App\Models\Settings::REGISTER_STATUS_*.
+// Mirror of \App\Enums\RegistrationStatus values.
 const REGISTRATION_BADGE_BASE = 'inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold ';
 const REGISTRATION_BADGE_CLASSES = {
     0: 'border border-emerald-500/30 bg-emerald-600 text-white shadow-sm dark:border-emerald-300/20 dark:bg-emerald-500 dark:text-slate-950',
@@ -52,7 +52,7 @@ Alpine.data('adminDashboard', () => ({
         this._scheduleRefresh();
     },
     _scheduleRefresh() {
-        const interval = Number.parseInt(this.$el.dataset.refreshInterval ?? '', 10) || (60 * 1000);
+        const interval = Number.parseInt(this.$el.dataset.refreshInterval ?? '', 10) || (15 * 60 * 1000);
         this._refreshInterval = window.setInterval(() => this._loadDashboardData(), interval);
         this._visibilityHandler = () => {
             if (!document.hidden && Date.now() - this._lastRefreshAt >= interval) {
@@ -141,14 +141,7 @@ Alpine.data('adminDashboard', () => ({
         if (message) message.textContent = String(reg.message ?? '');
     },
     _renderLastRefresh(timeText) {
-        // "Last dashboard refresh" reflects when the JS last successfully
-        // fetched data — drive it from the browser clock so the indicator
-        // always advances on a successful tick, even if the server snapshot
-        // happened to be served from cache (Cache::flexible) with an older
-        // `generated_at`. The server timestamp (when supplied) is used as a
-        // fallback only — see AdminPageController::getDashboardData().
-        const clientNow = new Date().toLocaleTimeString();
-        this._setStatText('last-refresh', clientNow || timeText || '');
+        this._setStatText('last-refresh', timeText ?? '');
     },
     _renderUserStats(stats) {
         if (!stats) return;

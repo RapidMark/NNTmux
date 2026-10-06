@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace App\Services\Runners;
 
 use App\Models\Category;
-use App\Models\Settings;
 use App\Services\AdditionalProcessing\AdditionalCandidateQuery;
 use App\Services\AdditionalProcessing\AdditionalProcessingOrchestrator;
+use App\Services\Configuration\ConfigurationProvider;
 use App\Services\NfoService;
 use App\Services\TempWorkspaceService;
-use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
 class PostProcessRunner extends BaseRunner
 {
@@ -45,13 +45,13 @@ class PostProcessRunner extends BaseRunner
                 // id may already be a single GUID bucket char; if not, take first char defensively
                 $char = isset($release->id) ? substr((string) $release->id, 0, 1) : '';
                 // Use postprocess:guid command which accepts the GUID character
-                $command = PHP_BINARY.' artisan postprocess:guid '.$type.' '.$char;
+                $command = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $type, $char];
                 if ($type === 'additional') {
-                    $command .= ' --worker --max-batches='.self::ADDITIONAL_WORKER_MAX_BATCHES;
+                    $command = [...$command, '--worker', '--max-batches='.self::ADDITIONAL_WORKER_MAX_BATCHES];
                 }
                 $commands[] = $command;
             }
-            $this->runStreamingCommands($commands, $maxProcesses, $desc); // @phpstan-ignore argument.type
+            $this->runStreamingCommands($commands, $maxProcesses, $desc);
 
             return;
         }
@@ -62,7 +62,7 @@ class PostProcessRunner extends BaseRunner
         if ($count <= 1 || $maxProcesses <= 1) {
             foreach ($releases as $release) {
                 $char = isset($release->id) ? substr((string) $release->id, 0, 1) : '';
-                $command = PHP_BINARY.' artisan postprocess:guid '.$type.' '.$char;
+                $command = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $type, $char];
                 echo $this->executeCommand($command);
                 cli()->primary('Finished task for '.$desc);
             }
@@ -73,7 +73,7 @@ class PostProcessRunner extends BaseRunner
         $commands = [];
         foreach ($releases as $idx => $release) {
             $char = isset($release->id) ? substr((string) $release->id, 0, 1) : '';
-            $commands[$idx] = PHP_BINARY.' artisan postprocess:guid '.$type.' '.$char;
+            $commands[$idx] = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $type, $char];
         }
 
         try {
@@ -86,6 +86,7 @@ class PostProcessRunner extends BaseRunner
         } catch (\Throwable $e) {
             Log::error('Postprocess batch failed: '.$e->getMessage());
             cli()->error('Postprocess batch failed: '.$e->getMessage());
+            throw new RuntimeException('Worker batch failed.', 0, $e);
         }
     }
 
@@ -104,9 +105,9 @@ class PostProcessRunner extends BaseRunner
             $commands = [];
             foreach ($tasks as $task) {
                 $char = substr((string) $task->id, 0, 1);
-                $commands[] = PHP_BINARY.' artisan postprocess:guid '.$task->type.' '.$char;
+                $commands[] = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $task->type, $char];
             }
-            $this->runStreamingCommands($commands, $maxProcesses, $desc); // @phpstan-ignore argument.type
+            $this->runStreamingCommands($commands, $maxProcesses, $desc);
 
             return;
         }
@@ -117,7 +118,7 @@ class PostProcessRunner extends BaseRunner
         if ($count <= 1 || $maxProcesses <= 1) {
             foreach ($tasks as $task) {
                 $char = substr((string) $task->id, 0, 1);
-                $command = PHP_BINARY.' artisan postprocess:guid '.$task->type.' '.$char;
+                $command = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $task->type, $char];
                 echo $this->executeCommand($command);
                 cli()->primary('Finished task for '.$desc);
             }
@@ -131,12 +132,12 @@ class PostProcessRunner extends BaseRunner
             $runTasks = [];
             foreach ($batch as $idx => $task) {
                 $char = substr((string) $task->id, 0, 1);
-                $command = PHP_BINARY.' artisan postprocess:guid '.$task->type.' '.$char;
-                $runTasks[$idx] = fn () => $this->executeCommand($command);
+                $command = [PHP_BINARY, base_path('artisan'), 'postprocess:guid', $task->type, $char];
+                $runTasks[$idx] = $command;
             }
 
             try {
-                $results = Concurrency::run($runTasks, $this->concurrencyTimeout());
+                $results = $this->runParallelCommands($runTasks, $maxProcesses);
 
                 foreach ($results as $output) {
                     echo $output;
@@ -145,6 +146,7 @@ class PostProcessRunner extends BaseRunner
             } catch (\Throwable $e) {
                 Log::error('Postprocess mixed batch failed: '.$e->getMessage());
                 cli()->error('Batch '.($batchIndex + 1).' failed: '.$e->getMessage());
+                throw new RuntimeException('Worker batch failed.', 0, $e);
             }
         }
     }
@@ -195,7 +197,7 @@ class PostProcessRunner extends BaseRunner
     private function getConsoleBuckets(): array
     {
         $bucketExpr = $this->guidBucketExpression();
-        $renamedFilter = (int) Settings::settingValue('lookupgames') === 2 ? 'AND isrenamed = 1' : '';
+        $renamedFilter = (int) app(ConfigurationProvider::class)->metadata()->gameLookup->value === 2 ? 'AND isrenamed = 1' : '';
 
         return DB::select('
             SELECT DISTINCT '.$bucketExpr.' AS id
@@ -212,7 +214,7 @@ class PostProcessRunner extends BaseRunner
     private function getGamesBuckets(): array
     {
         $bucketExpr = $this->guidBucketExpression();
-        $renamedFilter = (int) Settings::settingValue('lookupgames') === 2 ? 'AND isrenamed = 1' : '';
+        $renamedFilter = (int) app(ConfigurationProvider::class)->metadata()->gameLookup->value === 2 ? 'AND isrenamed = 1' : '';
 
         return DB::select('
             SELECT DISTINCT '.$bucketExpr.' AS id
@@ -231,8 +233,8 @@ class PostProcessRunner extends BaseRunner
         $bucketCounts = AdditionalCandidateQuery::availableBucketCounts();
         $chars = array_column($bucketCounts, 'bucket');
 
-        $maxProcesses = (int) Settings::settingValue('postthreads');
-        $queryLimit = (int) (Settings::settingValue('maxaddprocessed') ?: 25);
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreads;
+        $queryLimit = (int) (app(ConfigurationProvider::class)->postProcessing()->maxAdditionalProcessed ?: 25);
 
         // Normalize to the shape the rest of runPostProcess() expects:
         // an array of objects with an `id` (first GUID char) property. If the
@@ -363,7 +365,7 @@ class PostProcessRunner extends BaseRunner
 
     public function processNfo(): void
     {
-        if ((int) Settings::settingValue('lookupnfo') !== 1) {
+        if ((int) app(ConfigurationProvider::class)->postProcessing()->lookupNfo !== 1) {
             $this->headerNone();
 
             return;
@@ -386,19 +388,19 @@ class PostProcessRunner extends BaseRunner
             LIMIT 16';
         $queue = DB::select($sql);
 
-        $maxProcesses = (int) Settings::settingValue('nfothreads');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->nfoThreads;
         $this->runPostProcess($queue, $maxProcesses, 'nfo', 'nfo postprocessing');
     }
 
     public function processMovies(bool $renamedOnly): void
     {
-        if ((int) Settings::settingValue('lookupimdb') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->movieLookup->value <= 0) {
             $this->headerNone();
 
             return;
         }
 
-        $condLookup = ((int) Settings::settingValue('lookupimdb') === 2 ? 'AND isrenamed = 1' : '');
+        $condLookup = ((int) app(ConfigurationProvider::class)->metadata()->movieLookup->value === 2 ? 'AND isrenamed = 1' : '');
         $condRenamedOnly = ($renamedOnly ? 'AND isrenamed = 1' : '');
 
         $checkSql = '
@@ -425,19 +427,19 @@ class PostProcessRunner extends BaseRunner
             LIMIT 16';
         $queue = DB::select($sql);
 
-        $maxProcesses = (int) Settings::settingValue('postthreadsnon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsNon;
         $this->runPostProcess($queue, $maxProcesses, 'movie', 'movies postprocessing');
     }
 
     public function processTv(bool $renamedOnly): void
     {
-        if ((int) Settings::settingValue('lookuptv') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->tvLookup->value <= 0) {
             $this->headerNone();
 
             return;
         }
 
-        $condLookup = ((int) Settings::settingValue('lookuptv') === 2 ? 'AND isrenamed = 1' : '');
+        $condLookup = ((int) app(ConfigurationProvider::class)->metadata()->tvLookup->value === 2 ? 'AND isrenamed = 1' : '');
         $condRenamedOnly = ($renamedOnly ? 'AND isrenamed = 1' : '');
 
         $checkSql = '
@@ -470,7 +472,7 @@ class PostProcessRunner extends BaseRunner
             LIMIT 16';
         $queue = DB::select($sql);
 
-        $maxProcesses = (int) Settings::settingValue('postthreadsnon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsNon;
 
         // Use pipelined TV processing for better efficiency
         $this->runPostProcessTvPipeline($queue, $maxProcesses, 'tv postprocessing (pipelined)', $renamedOnly);
@@ -497,9 +499,9 @@ class PostProcessRunner extends BaseRunner
                 $char = isset($release->id) ? substr((string) $release->id, 0, 1) : '';
                 $renamed = isset($release->renamed) ? $release->renamed : '';
                 // Use the pipelined TV command
-                $commands[] = PHP_BINARY.' artisan postprocess:tv-pipeline '.$char.($renamed ? ' '.$renamed : '').' --mode=pipeline';
+                $commands[] = [PHP_BINARY, base_path('artisan'), 'postprocess:tv-pipeline', $char, ...($renamed ? [(string) $renamed] : []), '--mode=pipeline'];
             }
-            $this->runStreamingCommands($commands, $maxProcesses, $desc); // @phpstan-ignore argument.type
+            $this->runStreamingCommands($commands, $maxProcesses, $desc);
 
             return;
         }
@@ -507,7 +509,7 @@ class PostProcessRunner extends BaseRunner
         $count = count($releases);
         $this->headerStart('postprocess: '.$desc, $count, $maxProcesses);
 
-        // Process in batches using Laravel's native Concurrency facade
+        // Run bounded batches through the shared worker pool
         $batches = array_chunk($releases, max(1, $maxProcesses));
 
         foreach ($batches as $batchIndex => $batch) {
@@ -516,12 +518,12 @@ class PostProcessRunner extends BaseRunner
                 $char = isset($release->id) ? substr((string) $release->id, 0, 1) : '';
                 $renamed = isset($release->renamed) ? $release->renamed : '';
                 // Use the pipelined TV command for each GUID bucket
-                $command = PHP_BINARY.' artisan postprocess:tv-pipeline '.$char.($renamed ? ' '.$renamed : '').' --mode=pipeline';
-                $tasks[$idx] = fn () => $this->executeCommand($command);
+                $command = [PHP_BINARY, base_path('artisan'), 'postprocess:tv-pipeline', $char, ...($renamed ? [(string) $renamed] : []), '--mode=pipeline'];
+                $tasks[$idx] = $command;
             }
 
             try {
-                $results = Concurrency::run($tasks, $this->concurrencyTimeout());
+                $results = $this->runParallelCommands($tasks, $maxProcesses);
 
                 foreach ($results as $taskIdx => $output) {
                     echo $output;
@@ -530,6 +532,7 @@ class PostProcessRunner extends BaseRunner
             } catch (\Throwable $e) {
                 Log::error('TV pipeline batch failed: '.$e->getMessage());
                 cli()->error('Batch '.($batchIndex + 1).' failed: '.$e->getMessage());
+                throw new RuntimeException('Worker batch failed.', 0, $e);
             }
         }
     }
@@ -539,11 +542,11 @@ class PostProcessRunner extends BaseRunner
      */
     public function hasTvWork(bool $renamedOnly): bool
     {
-        if ((int) Settings::settingValue('lookuptv') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->tvLookup->value <= 0) {
             return false;
         }
 
-        $condLookup = ((int) Settings::settingValue('lookuptv') === 2 ? 'AND isrenamed = 1' : '');
+        $condLookup = ((int) app(ConfigurationProvider::class)->metadata()->tvLookup->value === 2 ? 'AND isrenamed = 1' : '');
         $condRenamedOnly = ($renamedOnly ? 'AND isrenamed = 1' : '');
 
         $checkSql = '
@@ -562,7 +565,7 @@ class PostProcessRunner extends BaseRunner
 
     public function processAnime(): void
     {
-        if ((int) Settings::settingValue('lookupanidb') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->animeLookup->value <= 0) {
             $this->headerNone();
 
             return;
@@ -589,13 +592,13 @@ class PostProcessRunner extends BaseRunner
             LIMIT 16';
         $queue = DB::select($sql);
 
-        $maxProcesses = (int) Settings::settingValue('postthreadsnon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsNon;
         $this->runPostProcess($queue, $maxProcesses, 'anime', 'anime postprocessing');
     }
 
     public function processBooks(): void
     {
-        if ((int) Settings::settingValue('lookupbooks') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->bookLookup->value <= 0) {
             $this->headerNone();
 
             return;
@@ -642,20 +645,20 @@ class PostProcessRunner extends BaseRunner
             LIMIT 16';
         $queue = DB::select($sql);
 
-        $maxProcesses = (int) Settings::settingValue('postthreadsamazon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsAmazon;
         $this->runPostProcess($queue, $maxProcesses, 'books', 'books postprocessing');
     }
 
     private function bookPendingCondition(): string
     {
-        return (int) Settings::settingValue('lookupbooks') === 2
+        return (int) app(ConfigurationProvider::class)->metadata()->bookLookup->value === 2
             ? '(bookinfo_id IS NULL AND isrenamed = 1)'
             : 'bookinfo_id IS NULL';
     }
 
     public function processMusic(): void
     {
-        if ((int) Settings::settingValue('lookupmusic') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->musicLookup->value <= 0) {
             $this->headerNone();
 
             return;
@@ -674,19 +677,19 @@ class PostProcessRunner extends BaseRunner
         }
 
         $queue = $this->getMusicBuckets();
-        $maxProcesses = (int) Settings::settingValue('postthreadsamazon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsAmazon;
         $this->runPostProcess($queue, $maxProcesses, 'music', 'music postprocessing');
     }
 
     public function processConsoles(): void
     {
-        if ((int) Settings::settingValue('lookupgames') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->gameLookup->value <= 0) {
             $this->headerNone();
 
             return;
         }
 
-        $renamedFilter = (int) Settings::settingValue('lookupgames') === 2 ? 'AND isrenamed = 1' : '';
+        $renamedFilter = (int) app(ConfigurationProvider::class)->metadata()->gameLookup->value === 2 ? 'AND isrenamed = 1' : '';
         $checkSql = '
             SELECT id
             FROM releases
@@ -701,19 +704,19 @@ class PostProcessRunner extends BaseRunner
         }
 
         $queue = $this->getConsoleBuckets();
-        $maxProcesses = (int) Settings::settingValue('postthreadsamazon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsAmazon;
         $this->runPostProcess($queue, $maxProcesses, 'console', 'console postprocessing');
     }
 
     public function processGames(): void
     {
-        if ((int) Settings::settingValue('lookupgames') <= 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->gameLookup->value <= 0) {
             $this->headerNone();
 
             return;
         }
 
-        $renamedFilter = (int) Settings::settingValue('lookupgames') === 2 ? 'AND isrenamed = 1' : '';
+        $renamedFilter = (int) app(ConfigurationProvider::class)->metadata()->gameLookup->value === 2 ? 'AND isrenamed = 1' : '';
         $checkSql = '
             SELECT id
             FROM releases
@@ -728,28 +731,28 @@ class PostProcessRunner extends BaseRunner
         }
 
         $queue = $this->getGamesBuckets();
-        $maxProcesses = (int) Settings::settingValue('postthreadsamazon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsAmazon;
         $this->runPostProcess($queue, $maxProcesses, 'games', 'games postprocessing');
     }
 
     public function processAmazon(): void
     {
-        $maxProcesses = (int) Settings::settingValue('postthreadsamazon');
+        $maxProcesses = (int) app(ConfigurationProvider::class)->postProcessing()->postThreadsAmazon;
         $tasks = [];
 
-        if ((int) Settings::settingValue('lookupbooks') > 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->bookLookup->value > 0) {
             foreach ($this->getBooksBuckets() as $row) {
                 $tasks[] = (object) ['type' => 'books', 'id' => (string) $row->id];
             }
         }
 
-        if ((int) Settings::settingValue('lookupmusic') > 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->musicLookup->value > 0) {
             foreach ($this->getMusicBuckets() as $row) {
                 $tasks[] = (object) ['type' => 'music', 'id' => (string) $row->id];
             }
         }
 
-        if ((int) Settings::settingValue('lookupgames') > 0) {
+        if ((int) app(ConfigurationProvider::class)->metadata()->gameLookup->value > 0) {
             foreach ($this->getConsoleBuckets() as $row) {
                 $tasks[] = (object) ['type' => 'console', 'id' => (string) $row->id];
             }

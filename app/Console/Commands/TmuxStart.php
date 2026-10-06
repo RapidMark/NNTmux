@@ -6,7 +6,9 @@ namespace App\Console\Commands;
 
 use App\Enums\TmuxPaneRole;
 use App\Models\Collection;
-use App\Models\Settings;
+use App\Services\Configuration\ConfigurationProvider;
+use App\Services\Configuration\ProcessingRuntimeStateRepository;
+use App\Services\Tmux\TmuxCommand;
 use App\Services\Tmux\TmuxLayoutBuilder;
 use App\Services\Tmux\TmuxPaneManager;
 use App\Services\Tmux\TmuxSessionManager;
@@ -49,8 +51,7 @@ class TmuxStart extends Command
 
             // Get session name
             $sessionName = $this->option('session')
-                ?? Settings::settingValue('tmux_session')
-                ?? config('tmux.session.default_name', 'nntmux');
+                ?? app(ConfigurationProvider::class)->tmux()->sessionName;
 
             // Initialize services
             $this->sessionManager = new TmuxSessionManager($sessionName);
@@ -67,15 +68,14 @@ class TmuxStart extends Command
             if ($this->sessionManager->sessionExists()) {
                 if (! $this->option('force')) {
                     $this->error("❌ Session '{$sessionName}' already exists");
-                    if ($this->confirm('Would you like to restart it?', false)) {
-                        $this->call('tmux:stop', ['--session' => $sessionName]);
-                        sleep(2);
-                    } else {
+                    if (! $this->confirm('Would you like to restart it?', false)) {
                         return Command::FAILURE;
                     }
-                } else {
-                    $this->call('tmux:stop', ['--session' => $sessionName]);
-                    sleep(2);
+                }
+                if ($this->call('tmux:stop', ['--session' => $sessionName, '--force' => true]) !== Command::SUCCESS) {
+                    $this->error('❌ Existing session could not stop safely. Restart cancelled.');
+
+                    return Command::FAILURE;
                 }
             }
 
@@ -84,7 +84,7 @@ class TmuxStart extends Command
             $this->resetOldCollections();
 
             // Get sequential mode
-            $sequential = (int) (Settings::settingValue('sequential') ?? 0);
+            $sequential = app(ConfigurationProvider::class)->tmux()->sequentialMode;
             $this->info("📐 Building layout (mode: {$sequential})");
 
             // Build the tmux layout
@@ -98,7 +98,9 @@ class TmuxStart extends Command
             $this->sessionCreated = true;
 
             // Set running flag
-            Settings::query()->where('name', 'running')->update(['value' => 1]);
+            $runtimeState = app(ProcessingRuntimeStateRepository::class);
+            $runtimeState->requestStop(false);
+            $runtimeState->setTmuxRunning(true);
             $this->info('✅ Running flag set');
 
             // Start monitor in background
@@ -123,8 +125,7 @@ class TmuxStart extends Command
                     return Command::FAILURE;
                 }
             } else {
-                $this->info("💡 To attach to the session, run: tmux attach -t {$sessionName}");
-                $this->info('💡 Or use: php artisan tmux:attach');
+                $this->info('💡 To attach, run: php artisan tmux:attach --session='.escapeshellarg($sessionName));
             }
 
             return Command::SUCCESS;
@@ -132,7 +133,7 @@ class TmuxStart extends Command
         } catch (\Exception $e) {
             if ($this->sessionCreated && isset($this->sessionManager)) {
                 $this->sessionManager->killSession();
-                Settings::query()->where('name', 'running')->update(['value' => 0]);
+                app(ProcessingRuntimeStateRepository::class)->setTmuxRunning(false);
             }
 
             $this->error('❌ Failed to start tmux: '.$e->getMessage());
@@ -161,7 +162,7 @@ class TmuxStart extends Command
      */
     private function resetOldCollections(): void
     {
-        $delayTime = (int) (Settings::settingValue('delaytime') ?? 2);
+        $delayTime = app(ConfigurationProvider::class)->ingestion()->collectionDelayHours;
 
         try {
             DB::transaction(function () use ($delayTime) {
@@ -188,28 +189,17 @@ class TmuxStart extends Command
     {
         $paneManager = new TmuxPaneManager($sessionName);
 
-        // Priority: new monitor > old monitor > artisan command
-        $newMonitor = base_path('app/Services/Tmux/Scripts/monitor.php');
-        $oldMonitor = base_path('misc/update/tmux/monitor.php');
-
-        if (file_exists($newMonitor)) {
-            // Use the new modernized monitor script
-            $command = "php {$newMonitor}";
-            $this->info('  ✓ Using modernized monitor script');
-        } elseif (file_exists($oldMonitor)) {
-            // Fall back to original monitor script
-            $command = "php {$oldMonitor}";
-            $this->warn('  ⚠ Using legacy monitor.php (consider updating)');
-        } else {
-            // Last resort: use artisan command (not ideal for pane)
-            $artisan = base_path('artisan');
-            $command = "php {$artisan} tmux:monitor --session={$sessionName}";
-            $this->warn('  ⚠ Using artisan command (not recommended for pane)');
-        }
+        $command = TmuxCommand::monitor($sessionName);
+        $channel = 'nntmux-ready-'.bin2hex(random_bytes(12));
+        $command[] = '--ready-channel='.$channel;
 
         $monitorPane = $paneManager->paneForRole(TmuxPaneRole::Monitor, '0.0');
         if (! $paneManager->respawnPane($monitorPane, $command)) {
             throw new \RuntimeException('Unable to start the tmux monitor pane.');
+        }
+        $ready = Process::timeout(30)->run(TmuxCommand::arguments(['wait-for', $channel]));
+        if (! $ready->successful()) {
+            throw new \RuntimeException('Tmux monitor did not acknowledge readiness.');
         }
     }
 }
