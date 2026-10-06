@@ -39,17 +39,23 @@ fi
 mariadb --protocol=socket --socket=/run/mysqld/mysqld.sock "$(setting DB_DATABASE)" \
     -e "CREATE INDEX IF NOT EXISTS ix_predb_filename ON predb (filename)"
 
+# Updates can ship schema changes; first run already migrated through deploy-init.
+as_app php artisan migrate --force --no-interaction
+
 as_app php artisan config:cache
 as_app php artisan route:cache
 as_app php artisan view:cache
 as_app php artisan event:cache
 as_app php artisan data:cache-structures
 
-# Template switches for settings that otherwise live in Admin, Tmux.
-ui=()
-[ -n "${FIX_NAMES:-}" ] && ui+=("'fix_names' => '$([ "${FIX_NAMES}" = true ] && echo 1 || echo 0)'")
-[ -n "${SCRAPE_IRC_USERNAME:-}" ] && ui+=("'run_ircscraper' => '1'")
-[ -n "${MIN_RELEASE_SIZE_MB:-}" ] && ui+=("'minsizetoformrelease' => '$(( MIN_RELEASE_SIZE_MB * 1048576 ))'")
-if [ ${#ui[@]} -gt 0 ]; then
-    as_app php artisan tinker --execute="App\Models\Settings::settingsUpdate([$(IFS=,; echo "${ui[*]}")]);"
+# Template switches for settings that otherwise live in the admin settings pages.
+tmux=(); ingest=()
+[ -n "${FIX_NAMES:-}" ] && tmux+=("'fix_names_enabled' => $([ "${FIX_NAMES}" = true ] && echo true || echo false)")
+[ -n "${SCRAPE_IRC_USERNAME:-}" ] && tmux+=("'run_irc_scraper' => true")
+[ -n "${MIN_RELEASE_SIZE_MB:-}" ] && ingest+=("'min_size_to_form_release' => $(( MIN_RELEASE_SIZE_MB * 1048576 ))")
+php_set=''
+[ ${#tmux[@]} -gt 0 ] && php_set+="\$r->update(App\Enums\ConfigurationDomain::Tmux, [$(IFS=,; echo "${tmux[*]}")]);"
+[ ${#ingest[@]} -gt 0 ] && php_set+="\$r->update(App\Enums\ConfigurationDomain::Ingestion, [$(IFS=,; echo "${ingest[*]}")]);"
+if [ -n "${php_set}" ]; then
+    as_app php artisan tinker --execute="\$r = app(App\Services\Configuration\DomainConfigurationRepository::class); ${php_set}"
 fi
