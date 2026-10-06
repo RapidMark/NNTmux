@@ -25,6 +25,8 @@ The container refuses to start without `ADMIN_USER`, `ADMIN_EMAIL`, `ADMIN_PASS`
 It then writes `/config/.env` with an `APP_KEY` and a random DB password, creates the database and admin user, builds the Manticore tables and drops `/config/install/install.lock`.
 Expect a few minutes.
 
+Every start runs `artisan migrate`, so updates that change the database apply themselves.
+
 Container environment variables always win over `/config/.env`, so the Unraid template drives the common settings and `.env` holds the rest.
 Edit `.env` for API keys or anything the template does not expose, then restart.
 
