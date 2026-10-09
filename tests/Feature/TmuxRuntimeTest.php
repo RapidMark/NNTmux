@@ -13,6 +13,7 @@ use App\Services\Tmux\TmuxPaneManager;
 use App\Services\Tmux\TmuxSessionManager;
 use App\Services\Tmux\TmuxTaskRunner;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\Process\Process;
 use Tests\Support\ConfigurationTestBuilder;
 use Tests\TestCase;
@@ -76,6 +77,63 @@ class TmuxRuntimeTest extends TestCase
         $this->assertTrue((new TmuxSessionManager('unrelated'))->sessionExists());
     }
 
+    #[DataProvider('paneDiscoveryLocales')]
+    public function test_pane_discovery_and_legacy_fallback_preserve_tabs_in_each_locale(string $locale): void
+    {
+        $previousEnvironment = [];
+        foreach (['LC_ALL' => $locale, 'LANG' => 'C.UTF-8', 'TMUX' => null] as $name => $value) {
+            $previousEnvironment[$name] = [getenv($name), $_ENV[$name] ?? null, $_SERVER[$name] ?? null];
+            putenv($value === null ? $name : $name.'='.$value);
+            if ($value === null) {
+                unset($_ENV[$name], $_SERVER[$name]);
+            } else {
+                $_ENV[$name] = $_SERVER[$name] = $value;
+            }
+        }
+
+        try {
+            $session = new TmuxSessionManager('locale-discovery');
+            $paneId = $session->createSession();
+            $this->assertNotNull($paneId, (string) $session->lastError());
+
+            $output = new Process(TmuxCommand::arguments([
+                'list-panes', '-t', $session->target(), '-F', "#{pane_id}\t#{pane_index}",
+            ]));
+            $output->mustRun();
+            $this->assertSame($paneId."\t0\n", $output->getOutput());
+
+            $panes = new TmuxPaneManager('locale-discovery');
+            $this->assertSame('', $panes->paneSnapshot()[$paneId]['role']);
+            $this->assertSame($paneId, $panes->paneForRole(TmuxPaneRole::Monitor, '0.0'));
+
+            $discovered = new TmuxPaneManager('locale-discovery');
+            $this->assertSame($paneId, $discovered->paneForRole(TmuxPaneRole::Monitor));
+            $this->assertSame('monitor', $discovered->paneSnapshot()[$paneId]['role']);
+            $this->assertSame(['0:0'], array_keys($session->listPanes()));
+        } finally {
+            foreach ($previousEnvironment as $name => [$value, $environmentValue, $serverValue]) {
+                putenv($value === false ? $name : $name.'='.$value);
+                if ($environmentValue === null) {
+                    unset($_ENV[$name]);
+                } else {
+                    $_ENV[$name] = $environmentValue;
+                }
+                if ($serverValue === null) {
+                    unset($_SERVER[$name]);
+                } else {
+                    $_SERVER[$name] = $serverValue;
+                }
+            }
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function paneDiscoveryLocales(): iterable
+    {
+        yield 'C overrides UTF-8 LANG' => ['C'];
+        yield 'UTF-8 locale' => ['C.UTF-8'];
+    }
+
     public function test_default_socket_session_is_visible_to_a_plain_tmux_client(): void
     {
         $directory = sys_get_temp_dir().'/'.$this->socket;
@@ -120,8 +178,11 @@ class TmuxRuntimeTest extends TestCase
         $runner->beginCycle();
         $this->assertTrue($runner->runPaneTask('ppadditional', [], ['settings' => ['post' => 3], 'counts' => ['now' => ['work_available' => 0, 'processnfo' => 0]]]));
         $this->assertFalse($panes->respawnPane($id, [PHP_BINARY, '-r', 'exit(0);']));
-        $this->await(static fn (): bool => file_get_contents($marker) === 'finished');
-        $panes->refresh();
+        $this->await(function () use ($panes, $id, $marker): bool {
+            $panes->refresh();
+
+            return $panes->paneSnapshot()[$id]['dead'] && file_get_contents($marker) === 'finished';
+        });
         $this->assertSame(0, $panes->paneSnapshot()[$id]['exit_code']);
     }
 

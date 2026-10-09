@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Tmux;
 
 use App\Models\Category;
+use App\Services\BookProcessingCandidateQuery;
 use App\Services\Configuration\ConfigurationProvider;
 use App\Services\Configuration\ProcessingRuntimeStateRepository;
 use App\Services\NameFixing\NameFixingService;
@@ -281,6 +282,9 @@ class Tmux
             case 1:
                 $movieLookupSql = imdb_id_needs_lookup_sql('imdbid');
                 $lookupMovies = (int) app(ConfigurationProvider::class)->metadata()->movieLookup->value;
+                $bookWorkSql = BookProcessingCandidateQuery::workCondition(
+                    (int) $this->configuration->metadata()->bookLookup->value
+                );
 
                 if ($lookupMovies <= 0) {
                     $movieLookupSql = '0 = 1';
@@ -296,7 +300,7 @@ class Tmux
                       SUM(IF(categories_id BETWEEN %d AND %d AND '.$movieLookupSql.',1,0)) AS processmovies,
 					SUM(IF(categories_id IN (%d, %d, %d) AND musicinfo_id IS NULL,1,0)) AS processmusic,
 					SUM(IF(categories_id BETWEEN %d AND %d AND consoleinfo_id IS NULL,1,0)) AS processconsole,
-					SUM(IF(categories_id BETWEEN %d AND %d AND bookinfo_id IS NULL,1,0)) AS processbooks,
+					SUM(IF(%s,1,0)) AS processbooks,
 					SUM(IF(categories_id = %d AND gamesinfo_id = 0,1,0)) AS processgames,
 					SUM(IF(1=1 %s,1,0)) AS processnfo,
 					SUM(IF(isrenamed = %d AND predb_id = 0 AND passwordstatus >= 0 AND nfostatus > %d
@@ -317,8 +321,7 @@ class Tmux
                     Category::MUSIC_OTHER,
                     Category::GAME_ROOT,
                     Category::GAME_OTHER,
-                    Category::BOOKS_ROOT,
-                    Category::BOOKS_UNKNOWN,
+                    $bookWorkSql,
                     Category::PC_GAMES,
                     NfoService::NfoQueryString(),
                     NameFixingService::IS_RENAMED_NONE,
@@ -416,17 +419,19 @@ class Tmux
     }
 
     /**
-     * @return array<string, mixed>
+     * Count the active ingestion tables directly; InnoDB row estimates can stay
+     * stale and legacy multigroup tables are no longer used by ingestion.
+     *
+     * @return list<object{name: string, row_count: int}>
      */
     public function cbpmTableQuery(): array
     {
-        return DB::select(
-            "
-			SELECT TABLE_NAME AS name, TABLE_ROWS AS row_count
-      		FROM information_schema.TABLES
-      		WHERE TABLE_SCHEMA = (SELECT DATABASE())
-			AND TABLE_NAME REGEXP {escapeString('^(multigroup_)?(collections|binaries|parts|missed_parts)(_[0-9]+)?$')}
-			ORDER BY TABLE_NAME ASC"
-        );
+        $counts = [];
+
+        foreach (['binaries', 'parts', 'missed_parts'] as $table) {
+            $counts[] = (object) ['name' => $table, 'row_count' => DB::table($table)->count()];
+        }
+
+        return $counts;
     }
 }

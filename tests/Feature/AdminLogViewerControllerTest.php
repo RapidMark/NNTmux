@@ -5,33 +5,53 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Http\Middleware\Google2FAMiddleware;
+use App\Models\LogIndexFile;
 use App\Models\User;
+use App\Services\LogViewer\Index\LogIndex;
+use App\Services\LogViewer\Index\LogIndexer;
 use App\View\Composers\GlobalDataComposer;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Monolog\Handler\TestHandler;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
+use Tests\Support\FakeLogIndex;
 use Tests\TestCase;
 
 class AdminLogViewerControllerTest extends TestCase
 {
-    private string $logNamespace;
+    private const array APPLICATION_LOG = [
+        '[2026-03-10 09:00:00] local.INFO: first entry',
+        '[2026-03-10 09:01:00] local.ERROR: payment failed',
+        '#0 /app/Payments.php(12): charge()',
+        '#1 {main}',
+        '[2026-03-10 09:02:00] local.WARNING: third entry',
+    ];
+
+    private string $logDirectory = '';
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->logDirectory = storage_path('framework/testing/log-viewer/'.Str::uuid()->toString());
+        File::ensureDirectoryExists($this->logDirectory);
 
         config([
             'database.default' => 'sqlite',
             'database.connections.sqlite.database' => ':memory:',
             'mail.from.address' => '',
             'app.key' => 'base64:'.base64_encode(random_bytes(32)),
+            'nntmux.log_viewer.path' => $this->logDirectory,
+            'logging.channels.admin' => ['driver' => 'monolog', 'handler' => TestHandler::class],
         ]);
 
         DB::purge();
@@ -43,15 +63,12 @@ class AdminLogViewerControllerTest extends TestCase
         $this->resetGlobalComposerState();
         app(PermissionRegistrar::class)->forgetCachedPermissions();
         $this->withoutMiddleware(Google2FAMiddleware::class);
-
-        $this->logNamespace = 'admin-log-viewer-tests/'.Str::uuid()->toString();
-        File::ensureDirectoryExists(storage_path('logs/'.$this->logNamespace));
     }
 
     protected function tearDown(): void
     {
-        if ($this->logNamespace !== '') {
-            File::deleteDirectory(storage_path('logs/'.$this->logNamespace));
+        if ($this->logDirectory !== '') {
+            File::deleteDirectory($this->logDirectory);
         }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
@@ -59,110 +76,391 @@ class AdminLogViewerControllerTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_admin_can_open_log_viewer_and_see_available_logs(): void
+    public function test_admin_sees_the_log_viewer_shell_with_available_logs(): void
     {
-        $selectedLog = $this->createLogFile('application.log', [
-            '[2026-03-10 09:00:00] local.INFO: first entry',
-            '[2026-03-10 09:01:00] local.WARNING: second entry',
-            '[2026-03-10 09:02:00] local.ERROR: third entry',
-        ]);
-        $otherLog = $this->createLogFile('secondary.log', [
-            '[2026-03-10 10:00:00] local.INFO: secondary log entry',
-        ]);
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $this->createLogFile('nested/secondary.log', ['[2026-03-10 10:00:00] local.INFO: secondary']);
 
-        $admin = $this->createUserWithRole('Admin');
-        /** @var Authenticatable $authenticatedAdmin */
-        $authenticatedAdmin = $admin;
-
-        $response = $this->actingAs($authenticatedAdmin)->get(route('admin.logs.index', [
-            'file' => $selectedLog,
-            'lines' => 100,
-        ]));
+        $response = $this->actingAs($this->admin())->get(route('admin.logs.index'));
 
         $response->assertOk();
         $response->assertSee('Log Viewer');
-        $response->assertSee($selectedLog);
-        $response->assertSee($otherLog);
-        $response->assertSee('Showing the latest 3 of 3 lines.');
-        $response->assertSee('[2026-03-10 09:02:00] local.ERROR: third entry');
+        $response->assertSee('x-data="adminLogViewer"', false);
+        $response->assertSee('application.log');
+        $response->assertSee('nested/secondary.log');
     }
 
-    public function test_non_admin_user_is_forbidden_from_log_viewer(): void
+    /**
+     * @return array<string, array{string, string}>
+     */
+    public static function protectedEndpointProvider(): array
     {
+        return [
+            'index' => ['GET', 'admin.logs.index'],
+            'files' => ['GET', 'admin.logs.files'],
+            'entries' => ['GET', 'admin.logs.entries'],
+            'entry' => ['GET', 'admin.logs.entry'],
+            'search' => ['GET', 'admin.logs.search'],
+            'facets' => ['GET', 'admin.logs.facets'],
+            'download' => ['GET', 'admin.logs.download'],
+            'truncate' => ['POST', 'admin.logs.truncate'],
+            'destroy' => ['DELETE', 'admin.logs.destroy'],
+        ];
+    }
+
+    #[DataProvider('protectedEndpointProvider')]
+    public function test_non_admin_users_are_forbidden_from_every_endpoint(string $method, string $routeName): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
         $user = $this->createUserWithRole('User');
         /** @var Authenticatable $authenticatedUser */
         $authenticatedUser = $user;
 
         $this->actingAs($authenticatedUser)
-            ->get(route('admin.logs.index'))
+            ->json($method, route($routeName), ['file' => 'application.log', 'files' => ['application.log'], 'q' => 'entry', 'offset' => 0])
             ->assertForbidden();
-    }
 
-    public function test_admin_can_search_within_selected_log_file_only(): void
-    {
-        $selectedLog = $this->createLogFile('search-target.log', [
-            'boot sequence started',
-            'match alpha',
-            'continuing process',
-            'match beta',
-        ]);
-        $this->createLogFile('other.log', [
-            'match from other file',
-        ]);
-
-        $admin = $this->createUserWithRole('Admin');
-        /** @var Authenticatable $authenticatedAdmin */
-        $authenticatedAdmin = $admin;
-
-        $response = $this->actingAs($authenticatedAdmin)->get(route('admin.logs.index', [
-            'file' => $selectedLog,
-            'search' => 'match',
-            'lines' => 100,
-        ]));
-
-        $response->assertOk();
-        $response->assertSee('Found 2 matching lines');
-        $response->assertSee('Line 2');
-        $response->assertSee('Line 4');
-        $response->assertSee('match alpha');
-        $response->assertSee('match beta');
-        $response->assertDontSee('match from other file');
+        $this->assertSame(implode(PHP_EOL, self::APPLICATION_LOG).PHP_EOL, File::get($this->logDirectory.'/application.log'));
     }
 
     public function test_unknown_log_file_redirects_with_error(): void
     {
-        $this->createLogFile('known.log', [
-            'known entry',
-        ]);
+        $this->createLogFile('known.log', ['known entry']);
 
-        $admin = $this->createUserWithRole('Admin');
-        /** @var Authenticatable $authenticatedAdmin */
-        $authenticatedAdmin = $admin;
-
-        $this->actingAs($authenticatedAdmin)
-            ->get(route('admin.logs.index', [
-                'file' => $this->logNamespace.'/missing.log',
-            ]))
+        $this->actingAs($this->admin())
+            ->get(route('admin.logs.index', ['file' => 'missing.log']))
             ->assertRedirect(route('admin.logs.index'))
             ->assertSessionHas('error', 'Selected log file is not available.');
     }
 
-    public function test_path_traversal_is_rejected(): void
+    public function test_path_traversal_is_rejected_on_the_page(): void
     {
-        $this->createLogFile('known.log', [
-            'known entry',
-        ]);
+        $this->createLogFile('known.log', ['known entry']);
 
-        $admin = $this->createUserWithRole('Admin');
-        /** @var Authenticatable $authenticatedAdmin */
-        $authenticatedAdmin = $admin;
-
-        $this->actingAs($authenticatedAdmin)
-            ->get(route('admin.logs.index', [
-                'file' => '../bootstrap/app.php',
-            ]))
+        $this->actingAs($this->admin())
+            ->get(route('admin.logs.index', ['file' => '../../../bootstrap/app.php']))
             ->assertRedirect(route('admin.logs.index'))
             ->assertSessionHas('error', 'Selected log file is not available.');
+    }
+
+    public function test_files_endpoint_lists_newest_first_with_format_detection(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 3600);
+        $this->createLogFile('horizon.log', ['  2026-10-05 21:53:20 App\Jobs\Reindex ... DONE']);
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.files'));
+
+        $response->assertOk();
+        $this->assertSame(['horizon.log', 'application.log'], array_column($response->json('files'), 'path'));
+        $this->assertSame([false, true], array_column($response->json('files'), 'structured'));
+    }
+
+    public function test_entries_groups_stack_traces_and_pages_with_the_before_cursor(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $admin = $this->admin();
+
+        $firstPage = $this->actingAs($admin)->getJson(route('admin.logs.entries', ['file' => 'application.log', 'limit' => 50]));
+
+        $firstPage->assertOk();
+        $this->assertSame(['third entry', 'payment failed', 'first entry'], array_column($firstPage->json('entries'), 'message'));
+        $this->assertSame("#0 /app/Payments.php(12): charge()\n#1 {main}", $firstPage->json('entries.1.body'));
+        $this->assertSame('error', $firstPage->json('entries.1.level'));
+        $this->assertNull($firstPage->json('before'));
+
+        $errorsOnly = $this->actingAs($admin)->getJson(route('admin.logs.entries', ['file' => 'application.log', 'levels' => ['error']]));
+        $this->assertSame(['payment failed'], array_column($errorsOnly->json('entries'), 'message'));
+
+        $paged = $this->actingAs($admin)->getJson(route('admin.logs.entries', ['file' => 'application.log', 'limit' => 50, 'before' => $firstPage->json('entries.1.offset')]));
+        $this->assertSame(['first entry'], array_column($paged->json('entries'), 'message'));
+    }
+
+    public function test_entries_rejects_unknown_traversal_and_symlinked_files(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $outside = dirname($this->logDirectory).'/outside-'.Str::random(8).'.txt';
+        File::put($outside, 'secret');
+        symlink($outside, $this->logDirectory.'/linked.log');
+        $admin = $this->admin();
+
+        try {
+            foreach (['missing.log', '../../../../.env', 'linked.log'] as $file) {
+                $this->actingAs($admin)
+                    ->getJson(route('admin.logs.entries', ['file' => $file]))
+                    ->assertNotFound();
+            }
+        } finally {
+            File::delete($outside);
+        }
+    }
+
+    public function test_entry_endpoint_resolves_the_full_entry_from_an_offset_inside_it(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $contents = File::get($this->logDirectory.'/application.log');
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.entry', [
+            'file' => 'application.log',
+            'offset' => strpos($contents, '#1 {main}'),
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonPath('entry.message', 'payment failed');
+        $response->assertJsonPath('entry.offset', strpos($contents, '[2026-03-10 09:01:00]'));
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function grepBinaryProvider(): array
+    {
+        return [
+            'grep engine' => ['grep'],
+            'php engine' => [''],
+        ];
+    }
+
+    #[DataProvider('grepBinaryProvider')]
+    public function test_search_covers_requested_files_and_reports_matches_per_file(string $grepBinary): void
+    {
+        config(['nntmux.log_viewer.grep_binary' => $grepBinary]);
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $this->createLogFile('payments.log', ['[2026-03-10 11:00:00] local.ERROR: payment declined']);
+        $this->createLogFile('ignored.log', ['[2026-03-10 12:00:00] local.ERROR: payment not requested']);
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.search', [
+            'q' => 'PAYMENT',
+            'files' => ['application.log', 'payments.log'],
+        ]));
+
+        $response->assertOk();
+        $this->assertSame(['application.log', 'payments.log'], array_column($response->json('results'), 'file'));
+        $this->assertSame(['payment failed'], array_column($response->json('results.0.entries'), 'message'));
+        $this->assertSame(2, $response->json('results.0.total_matches'));
+        $this->assertSame(['payment declined'], array_column($response->json('results.1.entries'), 'message'));
+        $this->assertSame(['text' => 'payment', 'hit' => true], $response->json('results.1.entries.0.message_segments.0'));
+        $response->assertDontSee('payment not requested');
+    }
+
+    public function test_search_rejects_invalid_regex_and_unknown_files(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.search', ['q' => 'pay(ment', 'regex' => 1, 'files' => ['application.log']]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['q' => 'Invalid regular expression.']);
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.search', ['q' => 'payment', 'files' => ['application.log', '../secrets.log']]))
+            ->assertNotFound();
+    }
+
+    public function test_level_only_search_needs_no_term(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.search', [
+            'levels' => ['warning'],
+            'files' => ['application.log'],
+        ]));
+
+        $response->assertOk();
+        $this->assertSame(['third entry'], array_column($response->json('results.0.entries'), 'message'));
+    }
+
+    public function test_download_streams_the_raw_file(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+
+        $response = $this->actingAs($this->admin())->get(route('admin.logs.download', ['file' => 'application.log']));
+
+        $response->assertOk();
+        $response->assertDownload('application.log');
+        $this->assertSame(implode(PHP_EOL, self::APPLICATION_LOG).PHP_EOL, $response->streamedContent());
+    }
+
+    public function test_truncate_empties_the_file_and_is_audited(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG);
+
+        $this->actingAs($this->admin())
+            ->postJson(route('admin.logs.truncate'), ['file' => 'application.log'])
+            ->assertOk()
+            ->assertJsonPath('file.size', 0);
+
+        $this->assertSame('', File::get($this->logDirectory.'/application.log'));
+        $this->assertTrue($this->auditHandler()->hasWarningThatContains('Admin truncated log file'));
+    }
+
+    public function test_delete_removes_an_idle_file_but_refuses_an_active_one(): void
+    {
+        $this->createLogFile('old.log', ['old'], time() - 86400);
+        $this->createLogFile('active.log', ['active']);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)
+            ->deleteJson(route('admin.logs.destroy'), ['file' => 'old.log'])
+            ->assertOk();
+        $this->actingAs($admin)
+            ->deleteJson(route('admin.logs.destroy'), ['file' => 'active.log'])
+            ->assertConflict();
+
+        $this->assertFileDoesNotExist($this->logDirectory.'/old.log');
+        $this->assertFileExists($this->logDirectory.'/active.log');
+        $this->assertTrue($this->auditHandler()->hasWarningThatContains('Admin deleted log file'));
+    }
+
+    public function test_invalid_utf8_in_logs_still_produces_json(): void
+    {
+        $this->createLogFile('binary.log', ["[2026-03-10 09:00:00] local.INFO: bad \xC3\x28 bytes"]);
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.entries', ['file' => 'binary.log']));
+
+        $response->assertOk();
+        $this->assertStringStartsWith('bad ', (string) $response->json('entries.0.message'));
+    }
+
+    public function test_search_uses_the_log_index_for_caught_up_files_and_grep_for_the_rest(): void
+    {
+        $index = $this->enableIndex();
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 600);
+        $this->createLogFile('payments.log', ['[2026-03-10 11:00:00] local.ERROR: payment declined']);
+        app(LogIndexer::class)->run(['application.log']);
+
+        $response = $this->actingAs($this->admin())->getJson(route('admin.logs.search', [
+            'q' => 'PAYMENT',
+            'files' => ['application.log', 'payments.log'],
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonPath('engine', 'mixed');
+        $this->assertSame(['manticore', 'grep'], array_column($response->json('results'), 'engine'));
+        $this->assertSame(['payment failed'], array_column($response->json('results.0.entries'), 'message'));
+        $this->assertSame("#0 /app/Payments.php(12): charge()\n#1 {main}", $response->json('results.0.entries.0.body'));
+        $this->assertSame(['payment declined'], array_column($response->json('results.1.entries'), 'message'));
+        $this->assertNotSame([], $index->queries);
+    }
+
+    public function test_regex_searches_and_index_failures_fall_back_to_grep(): void
+    {
+        $index = $this->enableIndex();
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 600);
+        app(LogIndexer::class)->run();
+        $admin = $this->admin();
+
+        $regex = $this->actingAs($admin)->getJson(route('admin.logs.search', ['q' => 'pay\w+ failed', 'regex' => 1, 'files' => ['application.log']]));
+        $regex->assertOk()->assertJsonPath('results.0.engine', 'grep');
+        $this->assertSame(['payment failed'], array_column($regex->json('results.0.entries'), 'message'));
+
+        $index->failing = true;
+        $failing = $this->actingAs($admin)->getJson(route('admin.logs.search', ['q' => 'payment', 'files' => ['application.log']]));
+        $failing->assertOk()->assertJsonPath('results.0.engine', 'grep');
+        $this->assertSame(['payment failed'], array_column($failing->json('results.0.entries'), 'message'));
+    }
+
+    public function test_grep_searches_filter_by_channel_and_time_range(): void
+    {
+        $this->createLogFile('application.log', [
+            '[2026-03-10 09:00:00] security.WARNING: login throttled',
+            '[2026-03-10 09:30:00] local.WARNING: disk almost full',
+            '[2026-03-10 10:00:00] security.WARNING: login throttled again',
+        ]);
+        $admin = $this->admin();
+
+        $byChannel = $this->actingAs($admin)->getJson(route('admin.logs.search', ['channels' => ['security'], 'files' => ['application.log']]));
+        $this->assertSame(['login throttled again', 'login throttled'], array_column($byChannel->json('results.0.entries'), 'message'));
+
+        $byTime = $this->actingAs($admin)->getJson(route('admin.logs.search', ['from' => '2026-03-10T09:15', 'to' => '2026-03-10T09:30', 'files' => ['application.log']]));
+        $this->assertSame(['disk almost full'], array_column($byTime->json('results.0.entries'), 'message'));
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.search', ['from' => '2026-03-10T10:00', 'to' => '2026-03-10T09:00', 'channels' => ['bad channel'], 'files' => ['application.log']]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['to', 'channels.0']);
+    }
+
+    public function test_facets_come_from_the_index_and_are_unavailable_without_it(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 600);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.facets', ['files' => ['application.log']]))
+            ->assertOk()
+            ->assertExactJson(['available' => false]);
+
+        $this->enableIndex();
+        app(LogIndexer::class)->run();
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.facets', ['files' => ['application.log'], 'levels' => ['error']]))
+            ->assertOk()
+            ->assertJsonPath('available', true)
+            ->assertJsonPath('partial', false)
+            ->assertJsonPath('levels', ['info' => 1, 'error' => 1, 'warning' => 1])
+            ->assertJsonPath('channels', ['local' => 3]);
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.facets', ['files' => ['application.log'], 'q' => 'pay.*', 'regex' => 1]))
+            ->assertExactJson(['available' => false]);
+    }
+
+    public function test_files_endpoint_reports_index_progress_when_the_index_is_available(): void
+    {
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 600);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->getJson(route('admin.logs.files'))->assertJsonPath('files.0.index', null);
+
+        $this->enableIndex();
+        app(LogIndexer::class)->run();
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.logs.files'))
+            ->assertJsonPath('files.0.index.state', 'indexed')
+            ->assertJsonPath('engine', 'manticore');
+    }
+
+    public function test_truncating_a_file_removes_it_from_the_index(): void
+    {
+        $index = $this->enableIndex();
+        $this->createLogFile('application.log', self::APPLICATION_LOG, time() - 600);
+        app(LogIndexer::class)->run();
+        $fileId = LogIndexFile::query()->sole()->id;
+
+        $this->actingAs($this->admin())
+            ->postJson(route('admin.logs.truncate'), ['file' => 'application.log'])
+            ->assertOk();
+
+        $this->assertSame([$fileId], $index->purged);
+        $this->assertSame(0, LogIndexFile::query()->count());
+    }
+
+    private function enableIndex(): FakeLogIndex
+    {
+        config(['nntmux.log_viewer.index.enabled' => true]);
+        $index = new FakeLogIndex;
+        $this->app->instance(LogIndex::class, $index);
+
+        return $index;
+    }
+
+    private function admin(): Authenticatable
+    {
+        /** @var Authenticatable $admin */
+        $admin = $this->createUserWithRole('Admin');
+
+        return $admin;
+    }
+
+    private function auditHandler(): TestHandler
+    {
+        $handler = Log::channel('admin')->getLogger()->getHandlers()[0];
+        $this->assertInstanceOf(TestHandler::class, $handler);
+
+        return $handler;
     }
 
     private function createSchema(): void
@@ -262,6 +560,8 @@ class AdminLogViewerControllerTest extends TestCase
             $table->json('metadata')->nullable();
             $table->timestamp('created_at')->nullable();
         });
+
+        (require database_path('migrations/2026_10_08_224008_create_log_index_files_table.php'))->up();
     }
 
     private function createUserWithRole(string $roleName): User
@@ -303,13 +603,13 @@ class AdminLogViewerControllerTest extends TestCase
     /**
      * @param  list<string>  $lines
      */
-    private function createLogFile(string $filename, array $lines): string
+    private function createLogFile(string $relativePath, array $lines, ?int $modifiedAt = null): string
     {
-        $relativePath = $this->logNamespace.'/'.$filename;
-        $absolutePath = storage_path('logs/'.$relativePath);
+        $absolutePath = $this->logDirectory.'/'.$relativePath;
 
         File::ensureDirectoryExists(dirname($absolutePath));
         File::put($absolutePath, implode(PHP_EOL, $lines).PHP_EOL);
+        touch($absolutePath, $modifiedAt ?? time());
         clearstatcache(true, $absolutePath);
 
         return $relativePath;

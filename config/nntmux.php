@@ -42,6 +42,8 @@ return [
         'audit_queue' => env('API_AUDIT_QUEUE', 'api-audit'),
         'access_update_interval' => (int) env('API_ACCESS_UPDATE_INTERVAL', 60),
         'metrics_sample_rate' => (float) env('API_METRICS_SAMPLE_RATE', 0.01),
+        // Max JSON body for HTTP QUERY API requests; nginx bounds QUERY bodies before PHP decodes them.
+        'query_max_body_bytes' => (int) env('API_QUERY_MAX_BODY_BYTES', 8192),
     ],
     'block_proxy_indexer_apps' => (bool) env('BLOCK_PROXY_INDEXER_APPS', false),
     'block_proxy_indexer_app_user_agents' => env('BLOCK_PROXY_INDEXER_APP_USER_AGENTS', 'Prowlarr/,NZBHydra2'),
@@ -97,5 +99,37 @@ return [
         'skip_preflight' => (bool) env('RELEASES_OPTIMIZE_SKIP_PREFLIGHT', false),
         'skip_free_space_check' => (bool) env('RELEASES_OPTIMIZE_SKIP_FREE_SPACE_CHECK', false),
         'chunk_size' => (int) env('RELEASES_OPTIMIZE_CHUNK_SIZE', 5000),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin log viewer
+    |--------------------------------------------------------------------------
+    |
+    | Search shells out to GNU grep when available (set the binary to an empty
+    | string to force the slower pure-PHP scanner). The timeout applies per
+    | search request; the browser fans a search out over several requests.
+    |
+    | When the index is enabled, `nntmux:index-logs` (scheduled every minute)
+    | tails every log into a Manticore RT table. Searches over files that are
+    | caught up use that table; regex searches, files still being indexed and
+    | Manticore outages fall back to grep per file.
+    |
+    */
+    'log_viewer' => [
+        'path' => storage_path('logs'),
+        'grep_binary' => (string) env('LOG_VIEWER_GREP_BINARY', 'grep'),
+        'search_timeout' => (int) env('LOG_VIEWER_SEARCH_TIMEOUT', 20),
+        'max_results_per_file' => 100,
+        'max_files_per_search' => 25,
+        'delete_guard_minutes' => 10,
+        'index' => [
+            'enabled' => (bool) env('LOG_VIEWER_INDEX_ENABLED', true),
+            'table' => (string) env('LOG_VIEWER_INDEX_TABLE', 'app_logs_rt'),
+            'batch_size' => (int) env('LOG_VIEWER_INDEX_BATCH_SIZE', 1000),
+            'max_bytes_per_run' => (int) env('LOG_VIEWER_INDEX_MAX_BYTES_PER_RUN', 268_435_456),
+            'max_bytes_per_file' => (int) env('LOG_VIEWER_INDEX_MAX_BYTES_PER_FILE', 67_108_864),
+            'lag_tolerance_bytes' => (int) env('LOG_VIEWER_INDEX_LAG_TOLERANCE_BYTES', 1_048_576),
+        ],
     ],
 ];

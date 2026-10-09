@@ -43,6 +43,7 @@ NNTP → NNTPService → BinariesRunner → ReleaseCreationService → ReleasePr
 | **Observer** | `app/Observers/`, `AppServiceProvider` | `ReleaseObserver`, `MovieInfoObserver`, `RolePromotionObserver` |
 | **View Composer** | `app/View/Composers/`, `AppServiceProvider` | `GlobalDataComposer` shared across `layouts.*` and `admin.*` |
 | **Status Probe** | `app/Services/StatusProbes/` | `ServiceProbeRegistry` aggregates `DatabaseProbe`, `DiskProbe`, `NntpProbe`, `QueueProbe`, `RedisProbe`, `SearchProbe` for `StatusPageController` (`/status`) and `DegradeWhenRedisUnreachable` middleware; tune via `config/status-probes.php` |
+| **Monitoring** | `app/Services/Monitoring/`, `config/monitoring.php`, `docker/monitoring/`, `scripts/install-monitoring.sh` | Prometheus + Grafana. `monitoring:export-metrics` (every minute) runs tagged `MetricsCollector`s and PUTs to the Pushgateway; processing counts come from `TmuxMetricsSnapshot`, published by the tmux monitor loop. Grafana is proxied at `/grafana/` and trusts RS256 JWTs from `GrafanaJwtIssuer`, which only ever arrive as the `X-JWT-Assertion` header and never in a URL. With `GRAFANA_AUTH=proxy`, nginx `auth_request` calls `AdminMonitoringController::authorizeGrafana` on every request; with `cookie` (Apache), the web server copies the HttpOnly `nntmux_grafana_jwt` cookie into the header. See `docker/monitoring/README.md`. Alpine `adminMonitoring`/`grafanaPanels` render the embeds (Alpine's CSP build forbids directives on `<iframe>`). Dashboard UIDs/panel ids are a contract with `config/monitoring.php` (`GrafanaDashboardDefinitionsTest`). The Ubuntu installer reuses exporters it didn't install and never modifies them; Sail uses the `docker-compose.monitoring.yml` overlay, which the Makefile adds to every compose call (`make up`/`down`) while `MONITORING_ENABLED=true` and the Grafana key exists |
 | **Passkey** | `app/Actions/Passkeys/`, `app/Http/Controllers/Auth/Passkey*` | Spatie Laravel Passkeys; ceremony actions (`GeneratePasskeyRegisterOptionsAction`, `FindPasskeyToAuthenticateAction`) wire into routes `passkeys.*` in `routes/web.php`. `GeneratePasskeyRegisterOptionsAction` overrides `authenticatorSelection()` (defaults: attachment=null, `residentKey=preferred`, `userVerification=preferred`) and injects WebAuthn L3 `hints` + `credProps` extension so Windows Hello / Touch ID / phone-via-QR / FIDO2 keys all appear in the browser picker on Windows domain machines. Tunable via `PASSKEY_AUTHENTICATOR_ATTACHMENT`, `PASSKEY_RESIDENT_KEY`, `PASSKEY_USER_VERIFICATION`, `PASSKEY_RELYING_PARTY_ID` (see `config/passkeys.php`) |
 
 ## Tmux Processing Engine
@@ -90,6 +91,7 @@ PHPUnit only (no Pest). Create tests: `php artisan make:test --phpunit {name}`
 ### API (`app/Http/Controllers/Api/`)
 - v1: XML (newznab compat) - `ApiController.php`
 - v2: JSON REST - `ApiV2Controller.php`
+- HTTP `QUERY` (RFC 10008) is accepted on v1 `/api/v1/api` and the v2 read endpoints (`search`, `tv`, `movies`, `audio`, `books`, `anime`, `details`); never on `getnzb`/`nzbadd`. Route middleware `acceptQuery:v1|v2` (`ValidateHttpQueryInput`) enforces the JSON body contract and normalizes input via `App\Services\Api\ApiInputCanonicalizer`, which the v2 cursor hash and `ApiUsageService` audit also use. The global outermost `DecorateHttpQueryResponses` sets `Cache-Control: private, no-store` and `Accept-Query`. v1 limits QUERY to `ApiController::QUERY_SAFE_FUNCTIONS`. QUERY body size is bounded in `docker/8.5/nginx.conf`. Client docs: `docs/nntmux_api_v2.md`. Run `php artisan route:cache` after deploy
 - RSS feeds are separate from `/api`: edit `routes/rss.php` + `App\Http\Controllers\RssController`; `/rss/*` is mounted from `bootstrap/app.php` and `RssController::userCheck()` validates `api_token`
 
 ### Config
@@ -148,7 +150,12 @@ find app -name "*.php" | xargs php -l  # PHP syntax lint on all changed files
 
 Auto-runs: PHP lint, Composer lock validation, Pint formatting. Commit limits: 200 char subject, 72 char body.
 
-When completing a task, stage newly created project files with Git. Do not stage temporary files or planning documents.
+## Git (agents never commit or push)
+
+- **Never run `git commit` or `git push`** (including `--amend`, tags, or force pushes), even when a task looks finished. The maintainer reviews, commits, and pushes.
+- When completing a task, **stage every project file you created or modified** with `git add <path>` (list paths explicitly; no `git add -A` / `git add .`).
+- Never stage temporary files you created (scratch scripts, debug output, logs, planning documents), and do not stage unrelated pre-existing changes.
+- Only commit or push when the user explicitly asks in that conversation; that approval covers that one request only.
 
 ## Key Directories
 

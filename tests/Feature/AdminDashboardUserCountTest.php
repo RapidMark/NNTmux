@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Enums\RegistrationStatus;
 use App\Http\Controllers\Admin\AdminPageController;
 use App\Models\Release;
-use App\Models\Settings;
 use App\Models\User;
 use App\Services\AdminDashboardSnapshotService;
+use App\Services\Monitoring\GrafanaEmbedService;
 use App\Services\RegistrationStatusService;
 use App\Services\SiteStatusService;
 use App\Services\SystemMetricsService;
@@ -48,9 +49,9 @@ class AdminDashboardUserCountTest extends TestCase
         $systemMetrics->method('getRamUsage')->willReturn(['used' => 1, 'total' => 8, 'percentage' => 12.5]);
         $registration = $this->createMock(RegistrationStatusService::class);
         $registration->method('resolve')->willReturn([
-            'manual_status' => Settings::REGISTER_STATUS_OPEN,
+            'manual_status' => RegistrationStatus::Open->value,
             'manual_status_label' => 'Open',
-            'effective_status' => Settings::REGISTER_STATUS_OPEN,
+            'effective_status' => RegistrationStatus::Open->value,
             'effective_status_label' => 'Open',
             'active_period' => null,
             'scheduled_override_active' => false,
@@ -203,7 +204,7 @@ class AdminDashboardUserCountTest extends TestCase
         ]);
         $controller->shouldReceive('setAdminPrefs')->once();
 
-        $view = $controller->index();
+        $view = $controller->index(app(GrafanaEmbedService::class));
         $data = $controller->getDashboardData()->getData(true);
 
         $this->assertSame($snapshotTime, $view->getData()['dashboardLastRefreshedAt']);
