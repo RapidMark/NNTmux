@@ -14,6 +14,7 @@ use App\Services\Tmux\TmuxOutput;
 use App\Services\Tmux\TmuxPaneManager;
 use App\Services\Tmux\TmuxSessionManager;
 use App\Services\Tmux\TmuxTaskRunner;
+use App\Support\MetadataSources;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
@@ -97,6 +98,8 @@ class TmuxMonitor extends Command
                 if (! $this->sessionManager->sessionExists() || ! $panes->heartbeat()) {
                     throw new \RuntimeException('Tmux monitor session disappeared.');
                 }
+
+                MetadataSources::logDailySummary();
 
                 // Collect statistics
                 $runVar = $this->monitor->collectStatistics();
