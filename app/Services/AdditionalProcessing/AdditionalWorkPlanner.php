@@ -64,7 +64,24 @@ final readonly class AdditionalWorkPlanner
                     $sevenZipTails[$sevenZip[0]] = [$sevenZip[1], (string) $segments[array_key_last($segments)]];
                 }
 
-                if (preg_match(self::ARCHIVE_PATTERN, $title) === 1) {
+                // HJSplit-style pieces of a video (name.mkv.001) are usually plain media, but may
+                // hide an archive: only the first article of the first piece is checked, by its data.
+                $mediaSplit = $this->mediaSplitVolume($title);
+                if ($mediaSplit !== null) {
+                    $messageIds = $mediaSplit <= 1
+                        ? $this->extractSegments($segments, 1, $seenMessageIds, $duplicateMessageIdCount)
+                        : [];
+                    if ($messageIds !== []) {
+                        $archiveCandidates[] = new ArchiveCandidate(
+                            title: $title,
+                            messageIds: $messageIds,
+                            likelyFirstVolume: true,
+                            sourceIndex: $sourceIndex,
+                            hasFirstSegment: ($file['firstsegment'] ?? true) !== false,
+                            setKey: $this->archiveSetKey($title),
+                        );
+                    }
+                } elseif (preg_match(self::ARCHIVE_PATTERN, $title) === 1) {
                     $archiveMessageIds = $this->extractSegments(
                         $segments,
                         $this->config->maximumRarSegments,
@@ -439,6 +456,15 @@ final readonly class AdditionalWorkPlanner
         }
 
         return null;
+    }
+
+    private function mediaSplitVolume(string $title): ?int
+    {
+        if (preg_match('/'.$this->config->videoFileRegex.'\.(?<volume>\d{3})(?:$|[ ")\]]|-)/i', $title, $match) !== 1) {
+            return null;
+        }
+
+        return (int) $match['volume'];
     }
 
     private function hasFileExtension(string $title): bool
