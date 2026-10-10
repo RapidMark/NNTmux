@@ -39,7 +39,7 @@ COPY --from=php-nts /usr/local/etc/php/conf.d/ /opt/php-nts/conf.d/
 
 USER 0
 
-RUN apt-get update && apt-get install -y --no-install-recommends xz-utils wget gnupg redis-server \
+RUN apt-get update && apt-get install -y --no-install-recommends xz-utils wget gnupg redis-server p7zip-full \
     && install -d /etc/apt/keyrings \
     && wget -qO /etc/apt/keyrings/mariadb-keyring.pgp https://mariadb.org/mariadb_release_signing_key.pgp \
     && echo "deb [signed-by=/etc/apt/keyrings/mariadb-keyring.pgp] https://deb.mariadb.org/${MARIADB_VERSION}/debian bookworm main" > /etc/apt/sources.list.d/mariadb.list \
