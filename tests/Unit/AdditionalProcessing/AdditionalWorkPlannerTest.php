@@ -295,4 +295,28 @@ class AdditionalWorkPlannerTest extends TestCase
             $this->assertFalse($second->likelyFirstVolume);
         }
     }
+
+    #[Test]
+    public function it_plans_split_videos_as_media_and_keeps_numbered_archives(): void
+    {
+        $planner = new AdditionalWorkPlanner($this->makeConfig(['processMediaInfo' => true]));
+
+        $split = $planner->plan([
+            ['title' => '"Movie.2026.mkv.002" yEnc (1/80)', 'segments' => ['<m2-1>']],
+            ['title' => '"Movie.2026.mkv.001" yEnc (1/80)', 'segments' => ['<m1-1>', '<m1-2>']],
+        ], 'alt.binaries.test');
+        $archives = $planner->plan([
+            ['title' => '"Movie.2026.7z.001" yEnc (1/80)', 'segments' => ['<z1>']],
+            ['title' => '"Movie.2026.001" yEnc (1/80)', 'segments' => ['<n1>']],
+        ], 'alt.binaries.test');
+
+        $this->assertFalse($split->hasCompressedFile());
+        $this->assertSame('<m1-1>', $split->mediaInfoMessageId);
+        $this->assertSame([], $split->unsupportedReasons);
+        $this->assertSame(
+            ['"Movie.2026.7z.001" yEnc (1/80)', '"Movie.2026.001" yEnc (1/80)'],
+            array_map(static fn (ArchiveCandidate $candidate): string => $candidate->title, $archives->archiveCandidates),
+        );
+        $this->assertSame('', $archives->mediaInfoMessageId);
+    }
 }

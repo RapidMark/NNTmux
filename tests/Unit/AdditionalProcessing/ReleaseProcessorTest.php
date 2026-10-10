@@ -820,6 +820,85 @@ class ReleaseProcessorTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('splitVideoPayloads')]
+    public function it_decides_a_split_video_by_its_data(bool $archive): void
+    {
+        $config = $this->makeConfig(['processPasswords' => true, 'processMediaInfo' => true]);
+        $data = $archive
+            ? $this->rar('Movie.2026.1080p.mkv', str_repeat('x', 100))
+            : "\x1A\x45\xDF\xA3".str_repeat("\x00", 200);
+        $nzbParser = Mockery::mock(NzbContentParser::class);
+        $nzbParser->shouldReceive('parseNzb')->once()->andReturn([
+            'error' => null,
+            'contents' => [['title' => '"Movie.2026.mkv.001" yEnc (1/80)', 'segments' => ['<m1-1>', '<m1-2>']]],
+        ]);
+
+        $downloadService = Mockery::mock(UsenetDownloadService::class);
+        $this->expectDownloadScope($downloadService);
+        $downloadService->shouldReceive('download')
+            ->once()
+            ->with(DownloadKind::MediaInfo, '<m1-1>', '', 1)
+            ->andReturn(['success' => true, 'data' => $data, 'groupUnavailable' => false, 'error' => null]);
+        $downloadService->shouldReceive('meetsMinimumSize')->andReturnTrue();
+
+        $tmpPath = sys_get_temp_dir().'/split-video-'.uniqid().'/';
+        mkdir($tmpPath);
+        $workspace = Mockery::mock(TempWorkspaceService::class);
+        $workspace->shouldReceive('createReleaseTempFolder')->once()->andReturn($tmpPath);
+        $workspace->shouldReceive('listFiles')->andReturn([]);
+        $workspace->shouldReceive('clearDirectory')->once()->with($tmpPath, false)
+            ->andReturnUsing(static function () use ($tmpPath): void {
+                array_map('unlink', glob($tmpPath.'*') ?: []);
+                rmdir($tmpPath);
+            });
+
+        $mediaService = Mockery::mock(MediaExtractionService::class);
+        $releaseManager = Mockery::mock(ReleaseFileManager::class);
+        $releaseManager->shouldReceive('processReleaseNameFromNzbContents')->once()->andReturnFalse();
+        $releaseManager->shouldReceive('finalizeRelease')->once()->andReturnNull();
+        if ($archive) {
+            $mediaService->shouldNotReceive('getMediaInfo');
+            $releaseManager->shouldReceive('addFileInfo')
+                ->once()
+                ->with(Mockery::on(static fn (array $file): bool => $file['name'] === 'Movie.2026.1080p.mkv'), Mockery::any(), Mockery::any())
+                ->andReturnTrue();
+        } else {
+            $mediaService->shouldReceive('getMediaInfo')->once()->andReturnTrue();
+            $releaseManager->shouldNotReceive('addFileInfo');
+        }
+
+        $processor = new ReleaseProcessor(
+            $config,
+            $nzbParser,
+            new AdditionalWorkPlanner($config),
+            new ArchiveExtractionService($config),
+            $mediaService,
+            $downloadService,
+            $releaseManager,
+            Mockery::mock(ReleaseFilesArchiveFallback::class)->shouldIgnoreMissing(),
+            $workspace,
+            Mockery::mock(ConsoleOutputService::class)->shouldIgnoreMissing()
+        );
+
+        $context = $this->makeContext();
+        $context->release->nfostatus = 1;
+        $processor->process($context, '/tmp/main/');
+
+        $this->assertSame($archive, $context->nzbHasCompressedFile);
+    }
+
+    /**
+     * @return array<string, array{bool}>
+     */
+    public static function splitVideoPayloads(): array
+    {
+        return [
+            'video data' => [false],
+            'archive data' => [true],
+        ];
+    }
+
+    #[Test]
     public function it_inspects_an_archive_found_in_a_later_file_of_an_obfuscated_release(): void
     {
         $config = $this->makeConfig(['processPasswords' => true]);

@@ -488,7 +488,12 @@ class ReleaseProcessor
                 $context->release->id
             );
 
-            if ($result['success'] && is_string($result['data']) && $this->downloadService->meetsMinimumSize($result['data'])) {
+            if ($result['success'] && is_string($result['data']) && ArchiveExtractionService::hasArchiveSignature($result['data'])) {
+                // A video name (e.g. a split name.mkv.001) can still hold an archive.
+                $context->nzbHasCompressedFile = true;
+                $this->output->echoCompressedDownload();
+                $this->processCompressedData($result['data'], $context, false);
+            } elseif ($result['success'] && is_string($result['data']) && $this->downloadService->meetsMinimumSize($result['data'])) {
                 $this->output->echoMediaInfoDownload();
                 $fileLocation = $context->tmpPath.'media.avi';
                 File::put($fileLocation, $result['data']);
@@ -727,6 +732,7 @@ class ReleaseProcessor
         }
 
         if (isset($result['standaloneVideoType'])) {
+            $context->compressedFileIsMedia = true;
             $this->output->echoInlineVideo();
             $fileLocation = $context->tmpPath.'inline_video_'.uniqid('', true).'.'.$result['standaloneVideoType'];
             File::put($fileLocation, $result['standaloneVideoData']);
