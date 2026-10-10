@@ -18,4 +18,18 @@ final readonly class ArchiveCandidate
         public array $tailMessageIds = [],
         public bool $hasFirstSegment = true,
     ) {}
+
+    /**
+     * Name shared by every volume or piece of the file this candidate belongs to.
+     */
+    public function volumeSet(): string
+    {
+        $name = preg_match('/"([^"\r\n]+)"/', $this->title, $quoted) === 1 ? $quoted[1] : $this->title;
+
+        return strtolower((string) preg_replace(
+            '/\.(?:part\d+\.rar|rar|r\d{2,3}|7z(?:\.\d{3})?|\d{3}|z\d{2}|zipx?)$/i',
+            '',
+            trim($name),
+        ));
+    }
 }

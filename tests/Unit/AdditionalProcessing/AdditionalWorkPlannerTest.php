@@ -383,4 +383,46 @@ class AdditionalWorkPlannerTest extends TestCase
             $this->assertFalse($second->likelyFirstVolume);
         }
     }
+
+    #[Test]
+    public function it_checks_only_the_first_article_of_a_split_video_and_keeps_numbered_archives(): void
+    {
+        $planner = new AdditionalWorkPlanner($this->makeConfig(['processMediaInfo' => true]));
+
+        $split = $planner->plan([
+            ['title' => '"Movie.2026.mkv.002" yEnc (1/80)', 'segments' => ['<m2-1>']],
+            ['title' => '"Movie.2026.mkv.001" yEnc (1/80)', 'segments' => ['<m1-1>', '<m1-2>']],
+        ], 'alt.binaries.test');
+        $archives = $planner->plan([
+            ['title' => '"Movie.2026.7z.001" yEnc (1/80)', 'segments' => ['<z1>']],
+            ['title' => '"Movie.2026.001" yEnc (1/80)', 'segments' => ['<n1>']],
+        ], 'alt.binaries.test');
+
+        $this->assertCount(1, $split->archiveCandidates);
+        $this->assertSame('"Movie.2026.mkv.001" yEnc (1/80)', $split->archiveCandidates[0]->title);
+        $this->assertSame(['<m1-1>'], $split->archiveCandidates[0]->messageIds);
+        $this->assertSame('movie.2026.mkv', $split->archiveCandidates[0]->volumeSet());
+        $this->assertSame('', $split->mediaInfoMessageId);
+        $this->assertSame(
+            ['"Movie.2026.7z.001" yEnc (1/80)', '"Movie.2026.001" yEnc (1/80)'],
+            array_map(static fn (ArchiveCandidate $candidate): string => $candidate->title, $archives->archiveCandidates),
+        );
+        $this->assertSame('', $archives->mediaInfoMessageId);
+    }
+
+    #[Test]
+    public function it_checks_a_split_video_when_a_sample_has_the_mediainfo_or_only_passwords_are_checked(): void
+    {
+        $contents = [
+            ['title' => '"Movie.2026.sample.mkv" yEnc (1/5)', 'segments' => ['<s-1>']],
+            ['title' => '"Movie.2026.mkv.001" yEnc (1/80)', 'segments' => ['<m1-1>', '<m1-2>']],
+        ];
+
+        foreach ([['processMediaInfo' => true], ['processPasswords' => true]] as $settings) {
+            $plan = (new AdditionalWorkPlanner($this->makeConfig($settings)))->plan($contents, 'alt.binaries.test');
+
+            $this->assertTrue($plan->hasCompressedFile());
+            $this->assertSame(['<m1-1>'], $plan->archiveCandidates[0]->messageIds);
+        }
+    }
 }
