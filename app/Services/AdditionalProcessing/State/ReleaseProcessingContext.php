@@ -59,6 +59,9 @@ class ReleaseProcessingContext
     // NZB state
     public bool $nzbHasCompressedFile = false;
 
+    // Data of a compressed candidate turned out to be plain media, which has no password.
+    public bool $compressedFileIsMedia = false;
+
     /**
      * @var list<array<string, mixed>>
      */
@@ -206,6 +209,7 @@ class ReleaseProcessingContext
         $this->passwordStatus = 0;
         $this->releaseHasPassword = false;
         $this->nzbHasCompressedFile = false;
+        $this->compressedFileIsMedia = false;
         $this->groupUnavailable = false;
         $this->workPlan = null;
         $this->mediaPlan = null;

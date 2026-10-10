@@ -422,6 +422,85 @@ class AdditionalProcessingReleaseFileManagerTest extends TestCase
         ];
     }
 
+    #[DataProvider('compressedCandidatePayloads')]
+    public function test_plain_media_behind_an_archive_name_finalizes_with_no_password(?string $data, string $expected): void
+    {
+        $data ??= $this->rar('Movie.2026.1080p.mkv', str_repeat('B', 100));
+        DB::table('releases')->insert([...$this->releaseRow(), 'nfostatus' => 1]);
+        Search::shouldReceive('updateRelease')->once()->with(1);
+        config(['nntmux.archive_retry_delay' => 86400]);
+        $this->freezeSecond();
+
+        $config = $this->makeConfig(['processPasswords' => true]);
+        $parser = Mockery::mock(NzbContentParser::class);
+        $parser->shouldReceive('parseNzb')->once()->with('guid-1')->andReturn([
+            'error' => null,
+            'contents' => [['title' => '"Movie.2026.part01.rar" yEnc (1/50)', 'segments' => ['<v1>']]],
+        ]);
+        $download = Mockery::mock(UsenetDownloadService::class);
+        $download->shouldReceive('beginReleaseScope')->once();
+        $download->shouldReceive('finishReleaseScope')->once()->andReturn(new DownloadMetrics);
+        $download->shouldReceive('download')->once()
+            ->with(DownloadKind::Compressed, ['<v1>'], '', 1, '"Movie.2026.part01.rar" yEnc (1/50)')
+            ->andReturn(['success' => true, 'data' => $data, 'groupUnavailable' => false, 'error' => null]);
+        $tmpPath = sys_get_temp_dir().'/media-payload-'.uniqid().'/';
+        File::ensureDirectoryExists($tmpPath);
+        $workspace = Mockery::mock(TempWorkspaceService::class);
+        $workspace->shouldReceive('createReleaseTempFolder')->once()->andReturn($tmpPath);
+        $workspace->shouldReceive('listFiles')->andReturn([]);
+        $workspace->shouldReceive('clearDirectory')->once()->with($tmpPath, false)
+            ->andReturnUsing(static fn () => File::deleteDirectory($tmpPath));
+        $processor = new ReleaseProcessor(
+            $config,
+            $parser,
+            new AdditionalWorkPlanner($config),
+            new ArchiveExtractionService($config),
+            Mockery::mock(MediaExtractionService::class),
+            $download,
+            $this->makeManager(),
+            Mockery::mock(ReleaseFilesArchiveFallback::class)->shouldIgnoreMissing(),
+            $workspace,
+            Mockery::mock(ConsoleOutputService::class)->shouldIgnoreMissing(),
+        );
+        $context = new ReleaseProcessingContext(Release::query()->findOrFail(1));
+
+        $processor->process($context, '/tmp/');
+
+        $release = DB::table('releases')->where('id', 1)->first();
+        $this->assertSame($expected === 'archive' ? 1 : 0, DB::table('release_files')->count());
+        if ($expected === 'unknown') {
+            $this->assertSame(-1, (int) $release->passwordstatus);
+            $this->assertSame(-1, (int) $release->haspreview);
+            $this->assertSame(now()->addDay()->toDateTimeString(), $release->archive_retry_at);
+        } else {
+            $this->assertSame(ReleaseBrowseService::PASSWD_NONE, (int) $release->passwordstatus);
+            $this->assertSame(0, (int) $release->haspreview);
+            $this->assertNull($release->archive_retry_at);
+        }
+    }
+
+    /**
+     * @return array<string, array{string|null, string}>
+     */
+    public static function compressedCandidatePayloads(): array
+    {
+        $pad = static fn (string $head): string => str_pad($head, 512, "\x5A");
+        $ts = str_repeat("\x47".str_repeat("\x10", 187), 3);
+
+        return [
+            'Matroska' => [$pad("\x1A\x45\xDF\xA3\x01\x00\x00\x00"), 'media'],
+            'MP4' => [$pad("\x00\x00\x00\x20ftypmp42"), 'media'],
+            'MOV' => [$pad("\x00\x00\x00\x14ftypqt  "), 'media'],
+            'AVI' => [$pad('RIFF'."\x00\x10\x00\x00".'AVI LIST'), 'media'],
+            'MPEG-TS' => [$ts, 'media'],
+            'MPEG-PS' => [$pad("\x00\x00\x01\xBA\x44"), 'media'],
+            'FLV' => [$pad("FLV\x01\x05\x00\x00\x00\x09"), 'media'],
+            'Ogg' => [$pad("OggS\x00\x02"), 'media'],
+            'RAR' => [null, 'archive'],
+            'unknown data' => [$pad("\x8E\x13\x7F\x02random"), 'unknown'],
+        ];
+    }
+
     public function test_invalid_release_file_sizes_are_rejected(): void
     {
         DB::table('releases')->insert($this->releaseRow());
