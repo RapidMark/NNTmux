@@ -362,9 +362,10 @@ class ReleaseProcessor
         }
 
         $this->output->echoCompressedDownload();
-        $this->processCompressedData(
-            $this->withSevenZipTail($context, $data, $candidate->tailMessageIds),
+        $this->processArchiveData(
             $context,
+            $data,
+            $candidate->tailMessageIds,
             false,
             $candidate->title,
             $candidate,
@@ -740,9 +741,10 @@ class ReleaseProcessor
                 $this->output->echoCompressedDownload();
                 $downloaded++;
 
-                $processed = $this->processCompressedData(
-                    $this->withSevenZipTail($context, $result['data'], $archiveCandidate->tailMessageIds),
+                $processed = $this->processArchiveData(
                     $context,
+                    $result['data'],
+                    $archiveCandidate->tailMessageIds,
                     $reverse,
                     $archiveCandidate->title,
                     $archiveCandidate,
@@ -760,10 +762,39 @@ class ReleaseProcessor
     /**
      * @param  list<string>  $tailMessageIds
      */
-    private function withSevenZipTail(ReleaseProcessingContext $context, string $data, array $tailMessageIds): string
+    private function processArchiveData(
+        ReleaseProcessingContext $context,
+        string $data,
+        array $tailMessageIds,
+        bool $reverse,
+        string $archiveTitle,
+        ?ArchiveCandidate $source = null,
+    ): bool {
+        // Without a tail, a 7z whose end header is already in $data is still listed by 7-Zip.
+        $tail = $this->downloadSevenZipTail($context, $data, $tailMessageIds);
+        $listing = str_starts_with($data, SzipInfo::MARKER_SIGNATURE)
+            ? $this->archiveService->listEncodedSevenZip($data, $tail, $context, $context->tmpPath)
+            : null;
+        if ($listing !== null) {
+            return $this->handleArchiveResult($listing, $data, $context, $reverse, $archiveTitle, $source);
+        }
+
+        return $this->processCompressedData(
+            $tail === null ? $data : ($this->archiveService->withSevenZipEndHeader($data, $tail) ?? $data),
+            $context,
+            $reverse,
+            $archiveTitle,
+            $source,
+        );
+    }
+
+    /**
+     * @param  list<string>  $tailMessageIds
+     */
+    private function downloadSevenZipTail(ReleaseProcessingContext $context, string $data, array $tailMessageIds): ?string
     {
         if ($tailMessageIds === [] || ! $this->archiveService->needsSevenZipEndHeader($data)) {
-            return $data;
+            return null;
         }
 
         $result = $this->downloadService->download(
@@ -776,11 +807,7 @@ class ReleaseProcessor
             $context->groupUnavailable = true;
         }
 
-        if (! $result['success'] || ! is_string($result['data'])) {
-            return $data;
-        }
-
-        return $this->archiveService->withSevenZipEndHeader($data, $result['data']) ?? $data;
+        return $result['success'] && is_string($result['data']) ? $result['data'] : null;
     }
 
     private function processCompressedData(
@@ -790,12 +817,27 @@ class ReleaseProcessor
         string $archiveTitle = '',
         ?ArchiveCandidate $source = null,
     ): bool {
-        $result = $this->archiveService->processCompressedData(
+        return $this->handleArchiveResult(
+            $this->archiveService->processCompressedData($compressedData, $context, $context->tmpPath),
             $compressedData,
             $context,
-            $context->tmpPath
+            $reverse,
+            $archiveTitle,
+            $source,
         );
+    }
 
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    private function handleArchiveResult(
+        array $result,
+        string $compressedData,
+        ReleaseProcessingContext $context,
+        bool $reverse,
+        string $archiveTitle,
+        ?ArchiveCandidate $source,
+    ): bool {
         if ($result['hasPassword']) {
             $context->releaseHasPassword = true;
             $context->passwordStatus = $result['passwordStatus'];
