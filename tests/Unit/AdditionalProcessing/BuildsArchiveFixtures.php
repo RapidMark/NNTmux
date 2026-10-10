@@ -56,15 +56,16 @@ trait BuildsArchiveFixtures
     }
 
     /**
-     * Build a minimal RAR4 archive with one stored file.
+     * Build a minimal RAR4 archive with one stored file, or a later volume continuing it.
      */
-    private function rar(string $name, string $content, bool $encryptedFile = false): string
+    private function rar(string $name, string $content, bool $encryptedFile = false, bool $laterVolume = false): string
     {
         $file = pack('VVCVVCCvV', strlen($content), strlen($content), 0, crc32($content), 0, 20, 0x30, strlen($name), 0x20).$name;
+        $fileFlags = 0x8000 | ($encryptedFile ? 0x04 : 0) | ($laterVolume ? 0x03 : 0);
 
         return "Rar!\x1A\x07\x00"
-            ."\x00\x00\x73\x00\x00\x0D\x00\x00\x00\x00\x00\x00\x00"
-            ."\x00\x00\x74".pack('vv', $encryptedFile ? 0x8004 : 0x8000, 7 + strlen($file)).$file
+            ."\x00\x00\x73".pack('v', $laterVolume ? 0x0101 : 0)."\x0D\x00\x00\x00\x00\x00\x00\x00"
+            ."\x00\x00\x74".pack('vv', $fileFlags, 7 + strlen($file)).$file
             .$content;
     }
 
