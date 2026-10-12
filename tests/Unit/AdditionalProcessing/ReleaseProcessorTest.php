@@ -49,10 +49,6 @@ class ReleaseProcessorTest extends TestCase
             (new Filesystem)->deleteDirectory($directory);
         }
         Mockery::close();
-        if ($this->workDir !== '') {
-            array_map('unlink', glob($this->workDir.'/*') ?: []);
-            rmdir($this->workDir);
-        }
         parent::tearDown();
     }
 
@@ -420,31 +416,6 @@ class ReleaseProcessorTest extends TestCase
 
         $this->assertNotSame(ProcessingOutcome::Passworded, $result->outcome);
         $this->assertFalse($context->releaseHasPassword);
-    }
-
-    #[Test]
-    public function it_lists_a_compressed_7z_header_with_the_7zip_client(): void
-    {
-        $this->workDir = sys_get_temp_dir().'/'.uniqid('7z-release-', true);
-        mkdir($this->workDir);
-        $context = $this->processCompressedSevenZipHeader($this->fakeSevenZipClient($this->workDir), [
-            'Extras/Some.Movie.nfo',
-            'Extras/naïve – notes.txt',
-            'Some.Movie.2024.1080p.WEB-DL.mkv',
-        ]);
-
-        $this->assertTrue($context->releaseHasPassword);
-        $this->assertSame(ReleaseBrowseService::PASSWD_RAR, $context->passwordStatus);
-        $this->assertFileExists($this->workDir.'/listed-size');
-    }
-
-    #[Test]
-    public function it_leaves_a_compressed_7z_header_unlisted_without_the_7zip_client(): void
-    {
-        $context = $this->processCompressedSevenZipHeader('/nonexistent/7z', []);
-
-        $this->assertFalse($context->releaseHasPassword);
-        $this->assertSame(0, $context->totalFileInfo);
     }
 
     #[Test]

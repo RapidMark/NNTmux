@@ -16,6 +16,5 @@ final readonly class ArchiveCandidate
         public bool $likelyFirstVolume,
         public int $sourceIndex,
         public array $tailMessageIds = [],
-        public bool $hasFirstSegment = true,
     ) {}
 }
