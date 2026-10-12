@@ -7,6 +7,8 @@ namespace App\Services\AdditionalProcessing;
 use App\Services\AdditionalProcessing\Config\ProcessingConfiguration;
 use App\Services\AdditionalProcessing\DTO\AdditionalWorkPlan;
 use App\Services\AdditionalProcessing\DTO\ArchiveCandidate;
+use App\Services\AdditionalProcessing\DTO\ImageCandidate;
+use App\Services\AdditionalProcessing\Media\ImageCandidateRanker;
 use Illuminate\Support\Facades\Log;
 
 final readonly class AdditionalWorkPlanner
@@ -14,6 +16,13 @@ final readonly class AdditionalWorkPlanner
     private const string SEVEN_ZIP_PATTERN = '/([^"\s\/]+)\.7z(?:\.(\d{3}))?($|[ ")]|-)/i';
 
     private const string ARCHIVE_PATTERN = '/(\.(part\d+|[rz]\d+|rar|7z|0+|0*10?|zipr\d{2,3}|zipx?)("|\s*\.rar)*($|[ ")]|-])|"[a-f0-9]{32}\.[1-9]\d{1,2}".*\(\d+\/\d{2,}\)$)/i';
+
+    /** Posted images smaller than this are icons or banners. */
+    private const int MIN_IMAGE_POSTED_BYTES = 10240;
+
+    private const int MAX_IMAGE_CANDIDATES = 3;
+
+    private const int TYPICAL_ARTICLE_BYTES = 716800;
 
     public function __construct(private ProcessingConfiguration $config) {}
 
@@ -24,6 +33,7 @@ final readonly class AdditionalWorkPlanner
     {
         $sampleMessageIds = [];
         $jpgMessageIds = [];
+        $images = [];
         $mediaInfoMessageId = '';
         $audioInfoMessageId = '';
         $audioInfoExtension = '';
@@ -86,6 +96,7 @@ final readonly class AdditionalWorkPlanner
                 if ($this->config->processThumbnails && $sampleMessageIds === [] && $segments !== []
                     && stripos($title, 'sample') !== false
                     && preg_match('/\.(?:jpe?g|png|webp)$/i', $title) !== 1
+                    && preg_match(self::ARCHIVE_PATTERN, $title) !== 1
                 ) {
                     $sampleMessageIds = $this->extractSegments(
                         $segments,
@@ -95,16 +106,11 @@ final readonly class AdditionalWorkPlanner
                     );
                 }
 
-                if ($this->config->processJPGSample && $jpgMessageIds === [] && $segments !== []
+                if ($this->config->processJPGSample && $segments !== []
                     && preg_match('/flac|lossless|mp3|music|inner-sanctum|sound/i', $groupName) !== 1
-                    && preg_match('/\.(?:jpe?g|png|webp)[. ")\]]/i', $title) === 1
+                    && preg_match('/\.(?:jpe?g|png|webp)(?:[. ")\]]|$)/i', $title) === 1
                 ) {
-                    $jpgMessageIds = $this->extractSegments(
-                        $segments,
-                        $this->config->segmentsToDownload,
-                        $seenMessageIds,
-                        $duplicateMessageIdCount,
-                    );
+                    $images[] = [$sourceIndex, $title, $segments, (int) ($file['size'] ?? 0)];
                 }
 
                 if ($this->config->processMediaInfo && $mediaInfoMessageId === '' && isset($segments[0])
@@ -150,8 +156,6 @@ final readonly class AdditionalWorkPlanner
             }
         }
 
-        $archiveCandidates = $this->preferRarVolumesWithHeaders($archiveCandidates);
-
         // Files without an extension can't be classified by name; sample their first segments.
         // Each entry must stand for exactly one NZB file, not several merged by a stripped subject.
         $probeCandidates = [];
@@ -193,6 +197,13 @@ final readonly class AdditionalWorkPlanner
             }
         }
 
+        $imageCandidates = $this->imageCandidates($images, $seenMessageIds, $duplicateMessageIdCount);
+        $jpgMessageIds = $imageCandidates[0]->messageIds ?? [];
+
+        $par2IndexCandidates = $this->config->par2MediaMapping
+            ? $this->par2IndexCandidates($nzbContents)
+            : [];
+
         $bookFlood = $bookFileCount > 80 && ($bookFileCount * 2) >= count($nzbContents);
         $unsupportedReasons = [];
         if ($bookFlood) {
@@ -221,86 +232,133 @@ final readonly class AdditionalWorkPlanner
             unsupportedReasons: $unsupportedReasons,
             probeCandidates: $probeCandidates,
             probeIsOnlyFile: $probeIsOnlyFile,
+            par2IndexCandidates: $par2IndexCandidates,
+            mainVideoSourceIndexes: $this->mainVideoSourceIndexes($nzbContents),
+            imageCandidates: $imageCandidates,
         );
     }
 
     /**
-     * Every RAR volume starts with its own archive and file headers, but only in segment 1.
-     * When the first volume lacks that segment, inspect the earliest volume that has it.
+     * The best few posted images, each with every article it needs so it arrives whole.
+     * Icons and images too large to download whole are skipped.
      *
-     * @param  list<ArchiveCandidate>  $candidates
-     * @return list<ArchiveCandidate>
+     * @param  list<array{0: int, 1: string, 2: array<int|string, mixed>, 3: int}>  $images  [source index, subject, segments, posted size]
+     * @param  array<string, true>  $seenMessageIds
+     * @return list<ImageCandidate>
      */
-    private function preferRarVolumesWithHeaders(array $candidates): array
+    private function imageCandidates(array $images, array &$seenMessageIds, int &$duplicateMessageIdCount): array
     {
-        $volumes = [];
-        foreach ($candidates as $index => $candidate) {
-            $volume = $this->rarVolume($candidate->title);
-            if ($volume !== null) {
-                $volumes[$volume[0]][$index] = $volume[1];
-            }
-        }
+        $candidates = [];
+        $ranked = ImageCandidateRanker::sort(
+            $images,
+            static fn (array $image): string => $image[1],
+            static fn (array $image): int => $image[3],
+        );
 
-        foreach ($volumes as $set) {
-            asort($set);
-            $first = array_key_first($set);
-            if (! $candidates[$first]->likelyFirstVolume || $candidates[$first]->hasFirstSegment) {
+        foreach ($ranked as [$sourceIndex, $title, $segments, $postedSize]) {
+            if ($postedSize > 0 && ($postedSize < self::MIN_IMAGE_POSTED_BYTES || $postedSize > $this->config->mediaImageMaxBytes)) {
                 continue;
             }
 
-            foreach (array_keys($set) as $index) {
-                if ($candidates[$index]->hasFirstSegment) {
-                    $candidates[$first] = $this->withLikelyFirstVolume($candidates[$first], false);
-                    $candidates[$index] = $this->withLikelyFirstVolume($candidates[$index], true);
-                    break;
-                }
+            // Without a posted size, fetch as many articles as the size limit could fill.
+            $limit = $postedSize > 0
+                ? count($segments)
+                : max($this->config->segmentsToDownload, (int) ceil($this->config->mediaImageMaxBytes / self::TYPICAL_ARTICLE_BYTES));
+            $messageIds = $this->extractSegments($segments, $limit, $seenMessageIds, $duplicateMessageIdCount);
+            if ($messageIds === []) {
+                continue;
+            }
+
+            $candidates[] = new ImageCandidate($title, $messageIds, $sourceIndex, $postedSize);
+            if (count($candidates) >= self::MAX_IMAGE_CANDIDATES) {
+                break;
             }
         }
 
         return $candidates;
     }
 
-    private function withLikelyFirstVolume(ArchiveCandidate $candidate, bool $likelyFirstVolume): ArchiveCandidate
+    /**
+     * The PAR2 index lists every file's real name and size. It is the smallest .par2 that
+     * is not a recovery volume or, in an obfuscated release, one of its smallest unnamed files.
+     *
+     * @param  array<int|string, mixed>  $nzbContents
+     * @return list<ArchiveCandidate>
+     */
+    private function par2IndexCandidates(array $nzbContents): array
     {
-        return new ArchiveCandidate(
-            title: $candidate->title,
-            messageIds: $candidate->messageIds,
-            likelyFirstVolume: $likelyFirstVolume,
-            sourceIndex: $candidate->sourceIndex,
-            tailMessageIds: $candidate->tailMessageIds,
-            hasFirstSegment: $candidate->hasFirstSegment,
-        );
+        $named = [];
+        $unnamed = [];
+        foreach (array_values($nzbContents) as $sourceIndex => $file) {
+            if (! is_array($file) || ! isset($file['segments'][0]) || (int) ($file['filecount'] ?? 1) !== 1) {
+                continue;
+            }
+
+            $title = (string) ($file['title'] ?? '');
+            if (preg_match('/\.par2\b/i', $title) === 1) {
+                if (preg_match('/\.vol\d+[+-]\d+\.par2\b/i', $title) !== 1) {
+                    $named[$sourceIndex] = $file;
+                }
+            } elseif (! $this->hasFileExtension($title)) {
+                $unnamed[$sourceIndex] = $file;
+            }
+        }
+
+        $bySize = static fn (array $a, array $b): int => (int) ($a['size'] ?? 0) <=> (int) ($b['size'] ?? 0);
+        uasort($named, $bySize);
+        uasort($unnamed, $bySize);
+        $chosen = $named !== []
+            ? array_slice($named, 0, 1, true)
+            // A lone unnamed file is the release itself, not an index of it.
+            : (count($unnamed) >= 3 ? array_slice($unnamed, 0, 2, true) : []);
+
+        $candidates = [];
+        foreach ($chosen as $sourceIndex => $file) {
+            $candidates[] = new ArchiveCandidate(
+                title: (string) ($file['title'] ?? ''),
+                messageIds: array_values(array_unique(array_map(
+                    strval(...),
+                    array_slice($file['segments'], 0, $this->config->par2IndexMaxSegments),
+                ))),
+                likelyFirstVolume: false,
+                sourceIndex: $sourceIndex,
+            );
+        }
+
+        return $candidates;
     }
 
     /**
-     * @return array{0: string, 1: int}|null set name and volume order (.rar before .r00, part01 before part02)
+     * Full-length video files posted as they are, which can stand in for a missing sample.
+     *
+     * @param  array<int|string, mixed>  $nzbContents
+     * @return list<int>
      */
-    private function rarVolume(string $title): ?array
+    private function mainVideoSourceIndexes(array $nzbContents): array
     {
-        [$name, $prefix] = preg_match('/"([^"\r\n]+)"/', $title, $quoted) === 1
-            ? [$quoted[1], '^(.+)']
-            : [$title, '([^"\s\/]+)'];
-
-        if (preg_match('/'.$prefix.'\.part(\d+)\.rar(?:$|[ ")-])/i', $name, $match) === 1) {
-            return [strtolower($match[1]), (int) $match[2]];
-        }
-        if (preg_match('/'.$prefix.'\.rar(?:$|[ ")-])/i', $name, $match) === 1) {
-            return [strtolower($match[1]), 0];
-        }
-        if (preg_match('/'.$prefix.'\.r(\d{2,3})(?:$|[ ")-])/i', $name, $match) === 1) {
-            return [strtolower($match[1]), (int) $match[2] + 1];
+        if (! $this->config->mediaMainVideoFallback || ! $this->config->processThumbnails) {
+            return [];
         }
 
-        return null;
-    }
+        $sizes = [];
+        foreach (array_values($nzbContents) as $sourceIndex => $file) {
+            if (! is_array($file) || ! isset($file['segments'][0]) || (int) ($file['filecount'] ?? 1) !== 1) {
+                continue;
+            }
 
-    private function mediaSplitVolume(string $title): ?int
-    {
-        if (preg_match('/'.$this->config->videoFileRegex.'\.(?<volume>\d{3})(?:$|[ ")\]]|-)/i', $title, $match) !== 1) {
-            return null;
+            $title = (string) ($file['title'] ?? '');
+            if ((int) ($file['size'] ?? 0) >= $this->config->mediaMainVideoMinBytes
+                && stripos($title, 'sample') === false
+                && preg_match(self::ARCHIVE_PATTERN, $title) !== 1
+                && preg_match('/'.$this->config->videoFileRegex.'(?:[. ")\]]|$)/i', $title) === 1
+            ) {
+                $sizes[$sourceIndex] = (int) $file['size'];
+            }
         }
 
-        return (int) $match['volume'];
+        arsort($sizes);
+
+        return array_slice(array_keys($sizes), 0, 2);
     }
 
     private function hasFileExtension(string $title): bool
