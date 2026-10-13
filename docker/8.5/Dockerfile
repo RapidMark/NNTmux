@@ -46,7 +46,7 @@ RUN apt-get install -y --no-install-recommends \
 
 # Install other packages
 RUN apt-get install -y \
-    tmux iputils-ping net-tools ffmpeg 7zip \
+    tmux iputils-ping net-tools ffmpeg \
     sudo jq htop fonts-powerline nano bash-completion time wget cron \
     jpegoptim webp optipng pngquant libavif-bin
 

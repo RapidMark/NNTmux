@@ -42,7 +42,6 @@ final readonly class AdditionalWorkPlanner
         $duplicateMessageIdCount = 0;
         $seenMessageIds = [];
         $sevenZipTails = [];
-        $mediaSplitMessageId = '';
 
         foreach (array_values($nzbContents) as $sourceIndex => $file) {
             if (! is_array($file)) {
@@ -65,13 +64,7 @@ final readonly class AdditionalWorkPlanner
                     $sevenZipTails[$sevenZip[0]] = [$sevenZip[1], (string) $segments[array_key_last($segments)]];
                 }
 
-                // HJSplit-style pieces of a plain video (name.mkv.001) are not archives.
-                $mediaSplit = $this->mediaSplitVolume($title);
-                if ($mediaSplit !== null) {
-                    if ($mediaSplit <= 1 && $mediaSplitMessageId === '' && isset($segments[0])) {
-                        $mediaSplitMessageId = (string) $segments[0];
-                    }
-                } elseif (preg_match(self::ARCHIVE_PATTERN, $title) === 1) {
+                if (preg_match(self::ARCHIVE_PATTERN, $title) === 1) {
                     $archiveMessageIds = $this->extractSegments(
                         $segments,
                         $this->config->maximumRarSegments,
@@ -131,14 +124,6 @@ final readonly class AdditionalWorkPlanner
             } catch (\ErrorException $e) {
                 Log::debug($e->getTraceAsString());
             }
-        }
-
-        // Without a sample, the first piece of a split video serves mediainfo and the sample.
-        if ($mediaInfoMessageId === '' && $mediaSplitMessageId !== ''
-            && ($this->config->processMediaInfo || $this->config->processThumbnails || $this->config->processVideo)
-        ) {
-            $mediaInfoMessageId = $mediaSplitMessageId;
-            $this->recordMessageId($mediaInfoMessageId, $seenMessageIds, $duplicateMessageIdCount);
         }
 
         foreach ($archiveCandidates as $index => $candidate) {
