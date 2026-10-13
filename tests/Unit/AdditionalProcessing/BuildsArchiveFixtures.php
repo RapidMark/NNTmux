@@ -41,21 +41,6 @@ trait BuildsArchiveFixtures
     }
 
     /**
-     * Write a stand-in 7-Zip client that prints a recorded `7z l -slt` listing and
-     * records the size of the archive it was given in "<dir>/listed-size".
-     */
-    private function fakeSevenZipClient(string $dir): string
-    {
-        $client = $dir.'/7z';
-        file_put_contents($client, "#!/bin/sh\nfor last; do :; done\n"
-            .'stat -c %s "$last" > '.escapeshellarg($dir.'/listed-size')."\n"
-            .'cat '.escapeshellarg(dirname(__DIR__, 2).'/Fixtures/7z-list-slt.txt')."\n");
-        chmod($client, 0755);
-
-        return $client;
-    }
-
-    /**
      * Build a minimal RAR4 archive with one file, stored unless another method is given,
      * or a later volume continuing it.
      */

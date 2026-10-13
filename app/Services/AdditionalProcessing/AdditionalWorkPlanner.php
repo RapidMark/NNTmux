@@ -433,15 +433,6 @@ final readonly class AdditionalWorkPlanner
         return null;
     }
 
-    private function mediaSplitVolume(string $title): ?int
-    {
-        if (preg_match('/'.$this->config->videoFileRegex.'\.(?<volume>\d{3})(?:$|[ ")\]]|-)/i', $title, $match) !== 1) {
-            return null;
-        }
-
-        return (int) $match['volume'];
-    }
-
     private function hasFileExtension(string $title): bool
     {
         $name = preg_match('/"([^"]+)"/', $title, $quoted) === 1 ? $quoted[1] : $title;
