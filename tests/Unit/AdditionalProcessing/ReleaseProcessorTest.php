@@ -1328,98 +1328,181 @@ class ReleaseProcessorTest extends TestCase
     }
 
     #[Test]
-    #[DataProvider('splitVideoPayloads')]
-    public function it_decides_a_split_video_by_its_data_with_only_password_checks(string $payload): void
+    public function it_lists_the_first_volume_of_several_archive_sets_for_a_season_pack(): void
+    {
+        $downloaded = [];
+
+        $context = $this->processSeasonPackSets(4, $downloaded);
+
+        $this->assertSame(['E01.part01', 'E02.part01', 'E03.part01'], $downloaded);
+        $this->assertTrue($context->seasonPack);
+        $this->assertSame(3, $context->totalFileInfo);
+    }
+
+    #[Test]
+    public function it_continues_with_the_next_archive_set_when_one_fails_to_download(): void
+    {
+        $downloaded = [];
+
+        $this->processSeasonPackSets(4, $downloaded, failing: ['E01.part01']);
+
+        $this->assertSame(['E01.part01', 'E02.part01', 'E03.part01', 'E04.part01'], $downloaded);
+    }
+
+    #[Test]
+    public function it_stops_reading_archive_sets_once_a_password_is_found(): void
+    {
+        $downloaded = [];
+
+        $context = $this->processSeasonPackSets(4, $downloaded, passworded: 'Show.S01E02.1080p.WEB-DL-GRP.mkv');
+
+        $this->assertSame(['E01.part01', 'E02.part01'], $downloaded);
+        $this->assertTrue($context->releaseHasPassword);
+    }
+
+    #[Test]
+    public function it_still_stops_at_the_first_listed_archive_set_of_a_movie(): void
     {
         $config = $this->makeConfig(['processPasswords' => true]);
-        $data = match ($payload) {
-            'video' => "\x1A\x45\xDF\xA3".str_repeat("\x00", 200),
-            'archive' => $this->rar('Movie.2026.1080p.mkv', str_repeat('x', 100)),
-            'encrypted archive' => $this->rar('Movie.2026.1080p.mkv', str_repeat('x', 100), encryptedFile: true),
-        };
         $nzbParser = Mockery::mock(NzbContentParser::class);
-        $nzbParser->shouldReceive('parseNzb')->once()->andReturn([
+        $nzbParser->shouldReceive('parseNzb')->once()->andReturn(['error' => null, 'contents' => [
+            ['title' => '"Movie.2026.1080p.BluRay-GRP.cd1.rar" yEnc (1/2)', 'segments' => ['<cd1>']],
+            ['title' => '"Movie.2026.1080p.BluRay-GRP.cd2.rar" yEnc (1/2)', 'segments' => ['<cd2>']],
+        ]]);
+        $downloadService = Mockery::mock(UsenetDownloadService::class);
+        $this->expectDownloadScope($downloadService);
+        $downloadService->shouldReceive('download')->once()
+            ->andReturn(['success' => true, 'data' => $this->rar('Movie.2026.1080p.BluRay-GRP.cd1.mkv', str_repeat('x', 100)), 'groupUnavailable' => false, 'error' => null]);
+
+        $context = $this->makeContext();
+        $context->release->nfostatus = 1;
+        $this->seasonPackProcessor($config, $nzbParser, $downloadService, $this->countingReleaseManager())->process($context, '/tmp/main/');
+
+        $this->assertFalse($context->seasonPack);
+        $this->assertSame(1, $context->totalFileInfo);
+    }
+
+    #[Test]
+    public function it_runs_the_held_back_predb_match_when_only_one_episode_was_listed(): void
+    {
+        $config = $this->makeConfig(['processPasswords' => true]);
+        $nzbParser = Mockery::mock(NzbContentParser::class);
+        $nzbParser->shouldReceive('parseNzb')->once()->andReturn(['error' => null, 'contents' => [
+            ['title' => '"a1b2c3d4.part01.rar" yEnc (1/2)', 'segments' => ['<episode>']],
+            ['title' => '"e5f6a7b8.rar" yEnc (1/1)', 'segments' => ['<extras>']],
+        ]]);
+        $downloadService = Mockery::mock(UsenetDownloadService::class);
+        $this->expectDownloadScope($downloadService);
+        $downloadService->shouldReceive('download')->twice()->andReturnUsing(fn (DownloadKind $kind, array $ids): array => [
+            'success' => true,
+            'data' => $this->rar($ids === ['<episode>'] ? 'Show.S01E05.1080p.WEB-DL-GRP.mkv' : 'Show.S01E05.1080p.WEB-DL-GRP.en.srt', str_repeat('x', 100)),
+            'groupUnavailable' => false,
             'error' => null,
-            'contents' => [
-                ['title' => '"Movie.2026.sample.mkv" yEnc (1/5)', 'segments' => ['<s-1>']],
-                ['title' => '"Movie.2026.mkv.001" yEnc (1/80)', 'segments' => ['<m1-1>', '<m1-2>']],
-                ['title' => '"Movie.2026.mkv.002" yEnc (1/80)', 'segments' => ['<m2-1>', '<m2-2>']],
-            ],
         ]);
+        $releaseManager = $this->countingReleaseManager();
+        $releaseManager->shouldReceive('matchFileNamesToPreDb')->once()
+            ->with(Mockery::on(static fn (array $files): bool => $files[0]['name'] === 'Show.S01E05.1080p.WEB-DL-GRP.mkv'), Mockery::type(ReleaseProcessingContext::class));
+
+        $context = $this->makeContext();
+        $context->release->nfostatus = 1;
+        $this->seasonPackProcessor($config, $nzbParser, $downloadService, $releaseManager)->process($context, '/tmp/main/');
+
+        $this->assertFalse($context->seasonPack);
+        $this->assertFalse($context->seasonPackProbable);
+    }
+
+    /**
+     * Run a season pack packed one RAR set (part01 + part02) per episode.
+     *
+     * @param  list<string>  $downloaded  Filled with the volumes downloaded, e.g. "E01.part01"
+     * @param  list<string>  $failing  Volumes whose download fails
+     */
+    private function processSeasonPackSets(
+        int $episodes,
+        array &$downloaded,
+        array $failing = [],
+        string $passworded = '',
+    ): ReleaseProcessingContext {
+        $config = $this->makeConfig(['processPasswords' => true]);
+        $contents = [];
+        for ($episode = 1; $episode <= $episodes; $episode++) {
+            foreach ([1, 2] as $part) {
+                $contents[] = [
+                    'title' => sprintf('"Show.S01E%02d.1080p.WEB-DL-GRP.part%02d.rar" yEnc (1/2)', $episode, $part),
+                    'segments' => [sprintf('<e%d-p%d>', $episode, $part)],
+                ];
+            }
+        }
+        $nzbParser = Mockery::mock(NzbContentParser::class);
+        $nzbParser->shouldReceive('parseNzb')->once()->andReturn(['error' => null, 'contents' => $contents]);
 
         $downloadService = Mockery::mock(UsenetDownloadService::class);
         $this->expectDownloadScope($downloadService);
         $downloadService->shouldReceive('download')
-            ->once()
-            ->with(DownloadKind::Compressed, ['<m1-1>'], '', 1, '"Movie.2026.mkv.001" yEnc (1/80)')
-            ->andReturn(['success' => true, 'data' => $data, 'groupUnavailable' => false, 'error' => null]);
+            ->andReturnUsing(function (DownloadKind $kind, array $messageIds, string $group, int $releaseId, string $title) use (&$downloaded, $failing): array {
+                preg_match('/(E\d{2})\.1080p\.WEB-DL-GRP\.(part\d{2})/', $title, $match);
+                $volume = $match[1].'.'.$match[2];
+                $downloaded[] = $volume;
+                if (in_array($volume, $failing, true)) {
+                    return ['success' => false, 'data' => null, 'groupUnavailable' => false, 'error' => 'missing'];
+                }
 
-        $tmpPath = sys_get_temp_dir().'/split-video-'.uniqid().'/';
-        mkdir($tmpPath);
-        $workspace = Mockery::mock(TempWorkspaceService::class);
-        $workspace->shouldReceive('createReleaseTempFolder')->once()->andReturn($tmpPath);
-        $workspace->shouldReceive('listFiles')->andReturn([]);
-        $workspace->shouldReceive('clearDirectory')->once()->with($tmpPath, false)
-            ->andReturnUsing(static function () use ($tmpPath): void {
-                array_map('unlink', glob($tmpPath.'*') ?: []);
-                rmdir($tmpPath);
+                return ['success' => true, 'data' => $this->rar('Show.S01'.$match[1].'.1080p.WEB-DL-GRP.mkv', str_repeat('x', 100)), 'groupUnavailable' => false, 'error' => null];
             });
 
-        $mediaService = Mockery::mock(MediaExtractionService::class);
         $releaseManager = Mockery::mock(ReleaseFileManager::class);
         $releaseManager->shouldReceive('processReleaseNameFromNzbContents')->once()->andReturnFalse();
+        $releaseManager->shouldReceive('addFileInfo')
+            ->andReturnUsing(static function (array $file, ReleaseProcessingContext $context) use ($passworded): bool {
+                $context->totalFileInfo++;
+                if ($file['name'] === $passworded) {
+                    $context->releaseHasPassword = true;
+                }
+
+                return true;
+            });
+        $releaseManager->shouldReceive('matchFileNamesToPreDb')->never();
         $releaseManager->shouldReceive('finalizeRelease')->once()->andReturnNull();
-        if ($payload === 'video') {
-            $mediaService->shouldIgnoreMissing(false);
-            $releaseManager->shouldNotReceive('addFileInfo');
-        } else {
-            $mediaService->shouldNotReceive('getMediaInfo');
-            $releaseManager->shouldReceive('addFileInfo')
-                ->once()
-                ->with(Mockery::on(static fn (array $file): bool => $file['name'] === 'Movie.2026.1080p.mkv'), Mockery::any(), Mockery::any())
-                ->andReturnUsing(static function (array $file, ReleaseProcessingContext $context): bool {
-                    if ($file['pass']) {
-                        $context->releaseHasPassword = true;
-                        $context->passwordStatus = ReleaseBrowseService::PASSWD_RAR;
 
-                        return false;
-                    }
+        $context = $this->makeContext();
+        $context->release->nfostatus = 1;
+        $this->seasonPackProcessor($config, $nzbParser, $downloadService, $releaseManager)->process($context, '/tmp/main/');
 
-                    return true;
-                });
-        }
+        return $context;
+    }
 
-        $processor = new ReleaseProcessor(
+    private function countingReleaseManager(): ReleaseFileManager&Mockery\MockInterface
+    {
+        $releaseManager = Mockery::mock(ReleaseFileManager::class);
+        $releaseManager->shouldReceive('processReleaseNameFromNzbContents')->once()->andReturnFalse();
+        $releaseManager->shouldReceive('addFileInfo')->andReturnUsing(static function (array $file, ReleaseProcessingContext $context): bool {
+            $context->totalFileInfo++;
+
+            return true;
+        });
+        $releaseManager->shouldReceive('finalizeRelease')->once()->andReturnNull();
+
+        return $releaseManager;
+    }
+
+    private function seasonPackProcessor(
+        ProcessingConfiguration $config,
+        NzbContentParser $nzbParser,
+        UsenetDownloadService $downloadService,
+        ReleaseFileManager $releaseManager,
+    ): ReleaseProcessor {
+        return new ReleaseProcessor(
             $config,
             $nzbParser,
             new AdditionalWorkPlanner($config),
             new ArchiveExtractionService($config),
-            $mediaService,
+            Mockery::mock(MediaExtractionService::class)->shouldIgnoreMissing(false),
             $downloadService,
             $releaseManager,
             Mockery::mock(ReleaseFilesArchiveFallback::class)->shouldIgnoreMissing(),
-            $workspace,
-            Mockery::mock(ConsoleOutputService::class)->shouldIgnoreMissing()
+            $this->tempWorkspaceWithoutFiles(),
+            Mockery::mock(ConsoleOutputService::class)->shouldIgnoreMissing(),
         );
-
-        $context = $this->makeContext();
-        $context->release->nfostatus = 1;
-        $processor->process($context, '/tmp/main/');
-
-        $this->assertSame($payload === 'encrypted archive', $context->releaseHasPassword);
-        $this->assertSame($payload === 'video', $context->compressedFilesAreMedia());
-    }
-
-    /**
-     * @return array<string, array{string}>
-     */
-    public static function splitVideoPayloads(): array
-    {
-        return [
-            'video data' => ['video'],
-            'archive data' => ['archive'],
-            'encrypted archive data' => ['encrypted archive'],
-        ];
     }
 
     /**
