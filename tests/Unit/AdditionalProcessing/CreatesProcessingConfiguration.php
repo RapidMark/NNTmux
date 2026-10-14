@@ -25,7 +25,6 @@ trait CreatesProcessingConfiguration
             'fetchLastFiles' => false,
             'unrarPath' => false,
             'unzipPath' => false,
-            'sevenZipPath' => false,
             'timeoutPath' => false,
             'timeoutSeconds' => 0,
             'queryLimit' => 25,

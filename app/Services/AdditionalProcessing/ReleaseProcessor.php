@@ -191,7 +191,6 @@ class ReleaseProcessor
             $probedArchive = $probe !== null && ArchiveExtractionService::hasArchiveSignature($probe[1]) ? $probe : null;
             if ($probedArchive !== null) {
                 $context->nzbHasCompressedFile = true;
-                $context->unplannedArchiveSeen = true;
             }
 
             if ($this->shouldProcessDownloads()) {
@@ -366,10 +365,9 @@ class ReleaseProcessor
         }
 
         $this->output->echoCompressedDownload();
-        $this->processArchiveData(
+        $this->processCompressedData(
+            $this->withSevenZipTail($context, $data, $candidate->tailMessageIds),
             $context,
-            $data,
-            $candidate->tailMessageIds,
             false,
             $candidate->title,
             $candidate,
@@ -824,11 +822,6 @@ class ReleaseProcessor
                 continue;
             }
 
-            // Further volumes of a file already found to be plain media hold no file list.
-            if (isset($context->mediaVolumeSets[$archiveCandidate->volumeSet()])) {
-                continue;
-            }
-
             if (! $reverse) {
                 $triedCompressedMids = [...$triedCompressedMids, ...$archiveCandidate->messageIds];
             }
@@ -855,8 +848,6 @@ class ReleaseProcessor
                 $processed = $this->processCompressedData(
                     $this->withSevenZipTail($context, $result['data'], $archiveCandidate->tailMessageIds),
                     $context,
-                    $result['data'],
-                    $archiveCandidate->tailMessageIds,
                     $reverse,
                     $archiveCandidate->title,
                     $archiveCandidate,
@@ -886,39 +877,10 @@ class ReleaseProcessor
     /**
      * @param  list<string>  $tailMessageIds
      */
-    private function processArchiveData(
-        ReleaseProcessingContext $context,
-        string $data,
-        array $tailMessageIds,
-        bool $reverse,
-        string $archiveTitle,
-        ?ArchiveCandidate $source = null,
-    ): bool {
-        // Without a tail, a 7z whose end header is already in $data is still listed by 7-Zip.
-        $tail = $this->downloadSevenZipTail($context, $data, $tailMessageIds);
-        $listing = str_starts_with($data, SzipInfo::MARKER_SIGNATURE)
-            ? $this->archiveService->listEncodedSevenZip($data, $tail, $context, $context->tmpPath)
-            : null;
-        if ($listing !== null) {
-            return $this->handleArchiveResult($listing, $data, $context, $reverse, $archiveTitle, $source);
-        }
-
-        return $this->processCompressedData(
-            $tail === null ? $data : ($this->archiveService->withSevenZipEndHeader($data, $tail) ?? $data),
-            $context,
-            $reverse,
-            $archiveTitle,
-            $source,
-        );
-    }
-
-    /**
-     * @param  list<string>  $tailMessageIds
-     */
-    private function downloadSevenZipTail(ReleaseProcessingContext $context, string $data, array $tailMessageIds): ?string
+    private function withSevenZipTail(ReleaseProcessingContext $context, string $data, array $tailMessageIds): string
     {
         if ($tailMessageIds === [] || ! $this->archiveService->needsSevenZipEndHeader($data)) {
-            return null;
+            return $data;
         }
 
         $result = $this->downloadService->download(
@@ -931,7 +893,11 @@ class ReleaseProcessor
             $context->groupUnavailable = true;
         }
 
-        return $result['success'] && is_string($result['data']) ? $result['data'] : null;
+        if (! $result['success'] || ! is_string($result['data'])) {
+            return $data;
+        }
+
+        return $this->archiveService->withSevenZipEndHeader($data, $result['data']) ?? $data;
     }
 
     private function processCompressedData(
@@ -941,27 +907,12 @@ class ReleaseProcessor
         string $archiveTitle = '',
         ?ArchiveCandidate $source = null,
     ): bool {
-        return $this->handleArchiveResult(
-            $this->archiveService->processCompressedData($compressedData, $context, $context->tmpPath),
+        $result = $this->archiveService->processCompressedData(
             $compressedData,
             $context,
-            $reverse,
-            $archiveTitle,
-            $source,
+            $context->tmpPath
         );
-    }
 
-    /**
-     * @param  array<string, mixed>  $result
-     */
-    private function handleArchiveResult(
-        array $result,
-        string $compressedData,
-        ReleaseProcessingContext $context,
-        bool $reverse,
-        string $archiveTitle,
-        ?ArchiveCandidate $source,
-    ): bool {
         if ($result['hasPassword']) {
             $context->releaseHasPassword = true;
             $context->passwordStatus = $result['passwordStatus'];
@@ -970,9 +921,6 @@ class ReleaseProcessor
         }
 
         if (isset($result['standaloneVideoType'])) {
-            if ($source !== null) {
-                $context->mediaVolumeSets[$source->volumeSet()] = true;
-            }
             $this->output->echoInlineVideo();
             $fileLocation = $context->tmpPath.'inline_video_'.uniqid('', true).'.'.$result['standaloneVideoType'];
             File::put($fileLocation, $result['standaloneVideoData']);
