@@ -417,23 +417,12 @@ final readonly class AdditionalWorkPlanner
     }
 
     /**
-     * Name shared by every volume of one archive set (Show.S01E01.part01.rar and
+     * Key shared by every volume of one archive set (Show.S01E01.part01.rar and
      * Show.S01E01.part02.rar), so a season pack packed per episode can be read set by set.
      */
     private function archiveSetKey(string $title): string
     {
-        $volume = $this->rarVolume($title) ?? $this->sevenZipVolume($title);
-        if ($volume !== null) {
-            return $volume[0];
-        }
-
-        if (preg_match('/"([a-f0-9]{32})\.[1-9]\d{1,2}"/i', $title, $hashed) === 1) {
-            return strtolower($hashed[1]);
-        }
-
-        $name = preg_match('/"([^"\r\n]+)"/', $title, $quoted) === 1 ? $quoted[1] : $title;
-
-        return strtolower((string) preg_replace('/\.(?:zipx?|zipr\d{2,3}|z\d{2,3}|rar|r\d{2,3}|7z|\d{3})$/i', '', trim($name)));
+        return ArchiveCandidate::volumeSetKey($title);
     }
 
     /**
@@ -460,7 +449,7 @@ final readonly class AdditionalWorkPlanner
 
     private function mediaSplitVolume(string $title): ?int
     {
-        if (preg_match('/'.$this->config->videoFileRegex.'\.(?<volume>\d{3})(?:$|[ ")\]]|-)/i', $title, $match) !== 1) {
+        if (preg_match('/'.$this->config->videoFileRegex.'\.(?<volume>\d{3})$/i', ArchiveCandidate::fileName($title), $match) !== 1) {
             return null;
         }
 

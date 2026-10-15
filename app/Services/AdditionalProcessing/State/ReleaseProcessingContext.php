@@ -50,7 +50,7 @@ class ReleaseProcessingContext
 
     public bool $releaseHasPassword = false;
 
-    /** An archive listing was cut off, so entries past the cut were never checked for a password. */
+    /** An archive listing was cut off or had unreadable records, so some entries were never checked for a password. */
     public bool $archiveListingIncomplete = false;
 
     // NFO state

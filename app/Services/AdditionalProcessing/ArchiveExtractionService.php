@@ -347,7 +347,8 @@ class ArchiveExtractionService
      * The listing is read as it streams and the client is stopped after
      * SEVENZIP_LISTING_MAX_ENTRIES entries or SEVENZIP_LISTING_MAX_BYTES of output; the
      * entries read until then are kept, as only a handful are stored per release anyway,
-     * and the context is marked so the password status of the release stays unknown.
+     * and the context is marked so the password status of the release stays unknown. The
+     * same happens when a record can't be read unambiguously and is left out.
      *
      * @return array<string, mixed>|null result like processCompressedData(), or null to fall back
      */
@@ -428,14 +429,15 @@ class ArchiveExtractionService
             @unlink($file);
         }
 
+        // Marked even when no record survived, as a rejected record may be the encrypted one.
+        if (! $complete) {
+            $context->archiveListingIncomplete = true;
+        }
         if ($files === []) {
             return null;
         }
 
         $context->compressedFilesChecked++;
-        if (! $complete) {
-            $context->archiveListingIncomplete = true;
-        }
 
         return [
             'success' => true,
@@ -450,100 +452,53 @@ class ArchiveExtractionService
 
     /**
      * Turn `7z l -slt` output into rarinfo-style file records, leaving out directories.
+     * Records that can't be read unambiguously are left out and clear $reliable; see
+     * SevenZipListingParser.
      *
      * @return list<array{name: string, size: int, date: int, pass: int, compressed: int, crc32?: string}>
      */
-    public static function parseSevenZipListing(string $output): array
+    public static function parseSevenZipListing(string $output, ?bool &$reliable = null): array
     {
-        $files = [];
-        foreach (preg_split('/\R\s*\R/', trim($output)) ?: [] as $block) {
-            $file = self::parseSevenZipEntry($block);
-            if ($file !== null) {
-                $files[] = $file;
-            }
-        }
+        $parser = new SevenZipListingParser;
+        $parser->feed($output);
+        $parser->finish();
+        $reliable = $parser->reliable;
 
-        return $files;
+        return $parser->files;
     }
 
     /**
-     * Parse a running `7z l -slt` listing block by block, stopping the client at the caps.
-     * Also says whether the listing was read to the end.
+     * Parse a running `7z l -slt` listing as it streams, stopping the client at the caps.
+     * Also says whether the listing was read to the end with every record understood.
      *
      * @return array{list<array{name: string, size: int, date: int, pass: int, compressed: int, crc32?: string}>, bool}
      */
     private function readSevenZipListing(SymfonyProcess $process): array
     {
-        $files = [];
-        $buffer = '';
+        $parser = new SevenZipListingParser;
         $bytes = 0;
         foreach ($process->getIterator(SymfonyProcess::ITER_SKIP_ERR) as $chunk) {
             $bytes += strlen($chunk);
-            $buffer .= $chunk;
-            while (preg_match('/\n[ \t\r]*\n/', $buffer, $match, PREG_OFFSET_CAPTURE) === 1) {
-                $file = self::parseSevenZipEntry(substr($buffer, 0, $match[0][1]));
-                $buffer = substr($buffer, $match[0][1] + strlen($match[0][0]));
-                if ($file !== null) {
-                    $files[] = $file;
-                }
-                if (count($files) >= self::SEVENZIP_LISTING_MAX_ENTRIES) {
-                    $process->stop(0);
-
-                    return [$files, false];
-                }
-            }
-            if ($bytes > self::SEVENZIP_LISTING_MAX_BYTES) {
+            $parser->feed($chunk);
+            if (count($parser->files) >= self::SEVENZIP_LISTING_MAX_ENTRIES) {
                 $process->stop(0);
 
-                return [$files, false];
+                return [array_slice($parser->files, 0, self::SEVENZIP_LISTING_MAX_ENTRIES), false];
+            }
+            if ($bytes > self::SEVENZIP_LISTING_MAX_BYTES) {
+                // The record being read when the output was cut is dropped, never half-parsed.
+                $process->stop(0);
+
+                return [$parser->files, false];
             }
         }
 
         if ($process->wait() !== 0) {
             return [[], true];
         }
+        $parser->finish();
 
-        $file = self::parseSevenZipEntry($buffer);
-        if ($file !== null) {
-            $files[] = $file;
-        }
-
-        return [$files, true];
-    }
-
-    /**
-     * @return array{name: string, size: int, date: int, pass: int, compressed: int, crc32?: string}|null
-     */
-    private static function parseSevenZipEntry(string $block): ?array
-    {
-        $entry = [];
-        foreach (preg_split('/\R/', trim($block)) ?: [] as $line) {
-            $parts = explode(' = ', $line, 2);
-            if (count($parts) === 2) {
-                $entry[$parts[0]] = $parts[1];
-            } elseif (str_ends_with($line, ' =')) {
-                $entry[substr($line, 0, -2)] = '';
-            }
-        }
-
-        if (($entry['Path'] ?? '') === '' || ! array_key_exists('Size', $entry)
-            || ($entry['Folder'] ?? '') === '+' || str_starts_with($entry['Attributes'] ?? '', 'D')
-        ) {
-            return null;
-        }
-
-        $file = [
-            'name' => $entry['Path'],
-            'size' => (int) $entry['Size'],
-            'date' => (int) strtotime(substr($entry['Modified'] ?? '', 0, 19)),
-            'pass' => ($entry['Encrypted'] ?? '') === '+' ? 1 : 0,
-            'compressed' => in_array($entry['Method'] ?? '', ['', 'Copy'], true) ? 0 : 1,
-        ];
-        if (preg_match('/^[0-9A-F]{1,8}$/i', $entry['CRC'] ?? '') === 1) {
-            $file['crc32'] = dechex((int) hexdec($entry['CRC']));
-        }
-
-        return $file;
+        return [$parser->files, $parser->reliable];
     }
 
     /**

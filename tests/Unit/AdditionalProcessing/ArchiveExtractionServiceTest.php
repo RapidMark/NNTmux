@@ -4,6 +4,7 @@ namespace Tests\Unit\AdditionalProcessing;
 
 use App\Models\Release;
 use App\Services\AdditionalProcessing\ArchiveExtractionService;
+use App\Services\AdditionalProcessing\SevenZipListingParser;
 use App\Services\AdditionalProcessing\State\ReleaseProcessingContext;
 use App\Services\Releases\ReleaseBrowseService;
 use dariusiii\rarinfo\ArchiveInfo;
@@ -307,6 +308,173 @@ class ArchiveExtractionServiceTest extends TestCase
         $this->assertSame(strtotime('2026-10-10 15:46:58'), $files[0]['date']);
     }
 
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function sevenZipLineEndings(): array
+    {
+        return ['LF' => ["\n"], 'CRLF' => ["\r\n"]];
+    }
+
+    #[Test]
+    #[DataProvider('sevenZipLineEndings')]
+    public function it_keeps_utf8_names_containing_byte_0x85_in_a_7z_listing(string $eol): void
+    {
+        // "Å" is C3 85 and "久" is E4 B9 85: 0x85 is NEL to byte-mode \R.
+        $listing = $this->sevenZipListing(['Åland.mkv', 'Movie.久.mkv', 'Extras/naïve – notes.txt'], $eol);
+
+        $files = ArchiveExtractionService::parseSevenZipListing($listing, $reliable);
+
+        $this->assertSame(['Åland.mkv', 'Movie.久.mkv', 'Extras/naïve – notes.txt'], array_column($files, 'name'));
+        $this->assertSame([10, 13, 27], array_column($files, 'size'));
+        $this->assertSame(['5a5a5a5a', '5a5a5a5a', '5a5a5a5a'], array_column($files, 'crc32'));
+        $this->assertTrue($reliable);
+    }
+
+    #[Test]
+    public function it_parses_a_crlf_7z_listing_split_at_every_byte(): void
+    {
+        $listing = $this->sevenZipListing(['Åland.mkv', 'Movie.久.mkv'], "\r\n");
+        $expected = ArchiveExtractionService::parseSevenZipListing($listing);
+        $this->assertSame(['Åland.mkv', 'Movie.久.mkv'], array_column($expected, 'name'));
+
+        for ($cut = 1; $cut < strlen($listing); $cut++) {
+            $parser = new SevenZipListingParser;
+            $parser->feed(substr($listing, 0, $cut));
+            $parser->feed(substr($listing, $cut));
+            $parser->finish();
+
+            $this->assertSame($expected, $parser->files, 'split at byte '.$cut);
+            $this->assertTrue($parser->reliable, 'split at byte '.$cut);
+        }
+    }
+
+    #[Test]
+    #[DataProvider('sevenZipLineEndings')]
+    public function it_streams_utf8_names_containing_byte_0x85_from_the_7z_client(string $eol): void
+    {
+        $dir = $this->workDir();
+        $listing = $this->sevenZipListing(['Åland.mkv', 'Movie.久.mkv'], $eol);
+        // Flush a chunk ending inside the first name and, for CRLF, one between CR and LF.
+        $cut = strpos($listing, "\x85");
+        $cutEol = strpos($listing, $eol) + 1;
+        $client = $this->sevenZipClientPrinting($dir, $this->printfBytes(substr($listing, 0, $cut)).'; sleep 0.2; '
+            .$this->printfBytes(substr($listing, $cut, $cutEol - $cut)).'; sleep 0.2; '
+            .$this->printfBytes(substr($listing, $cutEol)));
+        $service = new ArchiveExtractionService($this->makeConfig(['sevenZipPath' => $client]));
+        $archive = $this->sevenZip('ignored.mkv', str_repeat('x', 100), compressedHeader: true);
+        $context = $this->sevenZipContext();
+
+        $result = $service->listEncodedSevenZip($archive, null, $context, $dir.'/');
+
+        $this->assertIsArray($result);
+        $this->assertSame(['Åland.mkv', 'Movie.久.mkv'], array_column($result['files'], 'name'));
+        $this->assertSame([10, 13], array_column($result['files'], 'size'));
+        $this->assertFalse($context->archiveListingIncomplete);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function ambiguousSevenZipRecords(): array
+    {
+        $record = static fn (string $lines): string => $lines."Size = 5\nEncrypted = +\n\n";
+
+        return [
+            'tab in path' => [$record("Path = a\tb.mkv\n")],
+            'control byte in path' => [$record("Path = a\x01b.mkv\n")],
+            'DEL in path' => [$record("Path = a\x7Fb.mkv\n")],
+            'C1 control in path' => [$record("Path = a\u{0085}b.mkv\n")],
+            'bare CR in path' => [$record("Path = a\rb.mkv\n")],
+            'duplicate path' => [$record("Path = a.mkv\nPath = b.mkv\n")],
+            'duplicate size' => ["Path = a.mkv\nSize = 1\n".$record('')],
+            'line break in path' => [$record("Path = a\nb.mkv\n")],
+            'path without size' => ["Path = a.mkv\nEncrypted = +\n\n"],
+            'properties without path' => [$record('')],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('ambiguousSevenZipRecords')]
+    public function it_rejects_ambiguous_7z_listing_records(string $record): void
+    {
+        $listing = $this->sevenZipListing(['first.mkv'], "\n").$record.$this->sevenZipListing(['last.mkv'], "\n");
+
+        $files = ArchiveExtractionService::parseSevenZipListing($listing, $reliable);
+
+        $this->assertSame(['first.mkv', 'last.mkv'], array_column($files, 'name'));
+        $this->assertSame([0, 0], array_column($files, 'pass'));
+        $this->assertFalse($reliable);
+    }
+
+    #[Test]
+    public function it_marks_a_streamed_7z_listing_with_an_ambiguous_record_incomplete(): void
+    {
+        $dir = $this->workDir();
+        $listing = $this->sevenZipListing(['first.mkv'], "\r\n")."Path = a\x01b.mkv\r\nSize = 5\r\nEncrypted = +\r\n\r\n";
+        $client = $this->sevenZipClientPrinting($dir, $this->printfBytes($listing));
+        $service = new ArchiveExtractionService($this->makeConfig(['sevenZipPath' => $client]));
+        $archive = $this->sevenZip('ignored.mkv', str_repeat('x', 100), compressedHeader: true);
+        $context = $this->sevenZipContext();
+
+        $result = $service->listEncodedSevenZip($archive, null, $context, $dir.'/');
+
+        $this->assertIsArray($result);
+        $this->assertSame(['first.mkv'], array_column($result['files'], 'name'));
+        $this->assertTrue($context->archiveListingIncomplete);
+    }
+
+    #[Test]
+    #[DataProvider('ambiguousSevenZipRecords')]
+    public function it_marks_the_context_when_every_streamed_7z_record_is_rejected(string $record): void
+    {
+        $dir = $this->workDir();
+        $client = $this->sevenZipClientPrinting($dir, $this->printfBytes($record));
+        $service = new ArchiveExtractionService($this->makeConfig(['sevenZipPath' => $client]));
+        $archive = $this->sevenZip('ignored.mkv', str_repeat('x', 100), compressedHeader: true);
+        $context = $this->sevenZipContext();
+
+        $this->assertNull($service->listEncodedSevenZip($archive, null, $context, $dir.'/'));
+        $this->assertTrue($context->archiveListingIncomplete);
+        $this->assertSame(0, $context->compressedFilesChecked);
+    }
+
+    #[Test]
+    public function it_keeps_the_incomplete_mark_when_a_later_7z_listing_is_complete(): void
+    {
+        $dir = $this->workDir();
+        $archive = $this->sevenZip('ignored.mkv', str_repeat('x', 100), compressedHeader: true);
+        $context = $this->sevenZipContext();
+        $rejected = new ArchiveExtractionService($this->makeConfig([
+            'sevenZipPath' => $this->sevenZipClientPrinting($dir, $this->printfBytes("Path = a\x01b.mkv\nSize = 5\nEncrypted = +\n\n")),
+        ]));
+        $this->assertNull($rejected->listEncodedSevenZip($archive, null, $context, $dir.'/'));
+
+        $complete = new ArchiveExtractionService($this->makeConfig([
+            'sevenZipPath' => $this->sevenZipClientPrinting($dir, $this->printfBytes($this->sevenZipListing(['last.mkv'], "\n"))),
+        ]));
+        $result = $complete->listEncodedSevenZip($archive, null, $context, $dir.'/');
+
+        $this->assertIsArray($result);
+        $this->assertSame(['last.mkv'], array_column($result['files'], 'name'));
+        $this->assertTrue($context->archiveListingIncomplete);
+    }
+
+    #[Test]
+    public function it_does_not_mark_an_empty_or_failed_7z_listing_incomplete(): void
+    {
+        $dir = $this->workDir();
+        $archive = $this->sevenZip('ignored.mkv', str_repeat('x', 100), compressedHeader: true);
+
+        foreach (['true', 'exit 2'] as $script) {
+            $service = new ArchiveExtractionService($this->makeConfig(['sevenZipPath' => $this->sevenZipClientPrinting($dir, $script)]));
+            $context = $this->sevenZipContext();
+
+            $this->assertNull($service->listEncodedSevenZip($archive, null, $context, $dir.'/'), $script);
+            $this->assertFalse($context->archiveListingIncomplete, $script);
+        }
+    }
+
     #[Test]
     public function it_lists_a_compressed_7z_header_through_a_sparse_copy_of_the_archive(): void
     {
@@ -454,7 +622,9 @@ class ArchiveExtractionServiceTest extends TestCase
 
         foreach ([false, '/nonexistent/7z'] as $client) {
             $service = new ArchiveExtractionService($this->makeConfig(['sevenZipPath' => $client]));
-            $this->assertNull($service->listEncodedSevenZip(substr($archive, 0, 40), substr($archive, -60), $this->sevenZipContext(), sys_get_temp_dir().'/'));
+            $context = $this->sevenZipContext();
+            $this->assertNull($service->listEncodedSevenZip(substr($archive, 0, 40), substr($archive, -60), $context, sys_get_temp_dir().'/'));
+            $this->assertFalse($context->archiveListingIncomplete);
         }
     }
 
@@ -495,6 +665,39 @@ class ArchiveExtractionServiceTest extends TestCase
 
         $this->assertNull($list('-pSecret -mhe=on'));
         $this->assertSame([$dir.'/Real.Movie.2026.mkv', $dir.'/real.nfo'], glob($dir.'/*'));
+    }
+
+    /**
+     * A `7z l -slt -ba` listing of plain stored files, sized by name length.
+     *
+     * @param  list<string>  $names
+     */
+    private function sevenZipListing(array $names, string $eol): string
+    {
+        $listing = '';
+        foreach ($names as $name) {
+            $listing .= implode($eol, [
+                'Path = '.$name,
+                'Size = '.strlen($name),
+                'Packed Size = ',
+                'Modified = 2026-10-10 15:46:58.4180048',
+                'Attributes = A -rw-r--r--',
+                'CRC = 5A5A5A5A',
+                'Encrypted = -',
+                'Method = Copy',
+                'Block = 0',
+            ]).$eol.$eol;
+        }
+
+        return $listing;
+    }
+
+    /**
+     * A shell printf command writing these exact bytes, whatever the locale.
+     */
+    private function printfBytes(string $bytes): string
+    {
+        return "printf '".implode('', array_map(static fn (string $byte): string => sprintf('\\%03o', ord($byte)), str_split($bytes)))."'";
     }
 
     private function sevenZipClientPrinting(string $dir, string $script): string
