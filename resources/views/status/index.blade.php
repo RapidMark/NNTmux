@@ -7,42 +7,29 @@
     use App\Enums\IncidentStatusEnum;
 
     $overallBanner = match ($overallStatus) {
-        ServiceStatusEnum::Operational => 'border-green-500/50 bg-green-600 text-white dark:bg-green-900 dark:text-green-200',
-        ServiceStatusEnum::Degraded => 'border-yellow-500/50 bg-yellow-500 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-200',
-        ServiceStatusEnum::Maintenance => 'border-blue-500/50 bg-blue-600 text-white dark:bg-blue-900 dark:text-blue-200',
+        ServiceStatusEnum::Operational => 'border-success-500/50 bg-success-600 text-white dark:bg-success-900 dark:text-success-200',
+        ServiceStatusEnum::Degraded => 'border-warning-500/50 bg-warning-500 text-warning-950 dark:bg-warning-900 dark:text-warning-200',
+        ServiceStatusEnum::Maintenance => 'border-primary-500/50 bg-accent text-white dark:bg-primary-900 dark:text-primary-200',
         ServiceStatusEnum::PartialOutage => 'border-orange-500/50 bg-orange-600 text-white dark:bg-orange-900 dark:text-orange-200',
-        ServiceStatusEnum::MajorOutage => 'border-red-500/50 bg-red-600 text-white dark:bg-red-900 dark:text-red-200',
+        ServiceStatusEnum::MajorOutage => 'border-danger-500/50 bg-danger-600 text-white dark:bg-danger-900 dark:text-danger-200',
     };
 
     $serviceBadge = static function (ServiceStatusEnum $s): string {
         $base = 'px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full';
-        return $base.' '.match ($s) {
-            ServiceStatusEnum::Operational => 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200',
-            ServiceStatusEnum::Degraded => 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200',
-            ServiceStatusEnum::Maintenance => 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200',
-            ServiceStatusEnum::PartialOutage => 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200',
-            ServiceStatusEnum::MajorOutage => 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200',
-        };
+
+        return $base.' '.$s->badgeClasses();
     };
 
     $impactBadge = static function (IncidentImpactEnum $i): string {
         $base = 'px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full';
-        return $base.' '.match ($i) {
-            IncidentImpactEnum::None => 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200',
-            IncidentImpactEnum::Minor => 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200',
-            IncidentImpactEnum::Major => 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200',
-            IncidentImpactEnum::Critical => 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200',
-        };
+
+        return $base.' '.$i->badgeClasses();
     };
 
     $incidentStatusBadge = static function (IncidentStatusEnum $st): string {
         $base = 'px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full';
-        return $base.' '.match ($st) {
-            IncidentStatusEnum::Investigating => 'bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200',
-            IncidentStatusEnum::Identified => 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200',
-            IncidentStatusEnum::Monitoring => 'bg-cyan-100 dark:bg-cyan-900 text-cyan-800 dark:text-cyan-200',
-            IncidentStatusEnum::Resolved => 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200',
-        };
+
+        return $base.' '.$st->badgeClasses();
     };
 @endphp
 
@@ -114,13 +101,13 @@
                     <p class="text-sm text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap">{{ $incident->description }}</p>
                     <div class="mt-3 text-xs text-gray-600 dark:text-gray-400 flex flex-wrap items-center gap-x-3 gap-y-2">
                         <span class="inline-flex items-center gap-1">
-                            <i class="fas fa-layer-group"></i>
+                            <i aria-hidden="true" class="fas fa-layer-group"></i>
                             <span>{{ $incident->services->pluck('name')->join(', ') ?: '—' }}</span>
                         </span>
                         <span class="{{ $incidentStatusBadge($incident->status) }}">
-                            <i class="fas fa-flag text-[10px] opacity-90"></i>{{ $incident->status->label() }}
+                            <i aria-hidden="true" class="fas fa-flag text-[10px] opacity-90"></i>{{ $incident->status->label() }}
                         </span>
-                        <span><i class="fas fa-clock mr-1"></i>Started {{ $incident->started_at->timezone(config('app.timezone'))->format('M j, Y g:i A T') }}</span>
+                        <span><i aria-hidden="true" class="fas fa-clock mr-1"></i>Started {{ $incident->started_at->timezone(config('app.timezone'))->format('M j, Y g:i A T') }}</span>
                     </div>
                 </article>
             @empty

@@ -2,26 +2,26 @@
 
 @section('content')
 <div class="space-y-6">
+    <x-admin.page-header :title="$title" icon="fas fa-envelope">
+        <x-slot:actions>
+            <div class="flex flex-wrap gap-2">
+                @if(!$invitation->used_at)
+                    <form method="POST" action="{{ url('admin/invitations/' . $invitation->id . '/resend') }}" class="inline">
+                        @csrf
+                        <x-admin.button type="submit" tone="success" icon="fas fa-paper-plane">Resend</x-admin.button>
+                    </form>
+                    <form method="POST" action="{{ url('admin/invitations/' . $invitation->id . '/cancel') }}" class="inline"
+                          x-data="confirmForm"
+                          data-message="Are you sure you want to cancel this invitation?">
+                        @csrf
+                        <x-admin.button type="button" tone="warning" icon="fas fa-ban" @click="submit()">Cancel</x-admin.button>
+                    </form>
+                @endif
+                <x-admin.button :href="url('admin/invitations')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
+            </div>
+        </x-slot:actions>
+    </x-admin.page-header>
     <x-admin.card>
-        <x-admin.page-header :title="$title" icon="fas fa-envelope">
-            <x-slot:actions>
-                <div class="flex flex-wrap gap-2">
-                    @if(!$invitation->used_at)
-                        <form method="POST" action="{{ url('admin/invitations/' . $invitation->id . '/resend') }}" class="inline">
-                            @csrf
-                            <x-admin.button type="submit" tone="success" icon="fas fa-paper-plane">Resend</x-admin.button>
-                        </form>
-                        <form method="POST" action="{{ url('admin/invitations/' . $invitation->id . '/cancel') }}" class="inline"
-                              x-data="confirmForm"
-                              data-message="Are you sure you want to cancel this invitation?">
-                            @csrf
-                            <x-admin.button type="button" tone="warning" icon="fas fa-ban" @click="submit()">Cancel</x-admin.button>
-                        </form>
-                    @endif
-                    <x-admin.button :href="url('admin/invitations')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
-                </div>
-            </x-slot:actions>
-        </x-admin.page-header>
 
         <!-- Invitation Details -->
         <div class="p-6">
@@ -29,7 +29,7 @@
                 <!-- Basic Information -->
                 <div class="bg-gray-50 dark:bg-gray-900 p-6 rounded-lg">
                     <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                        <i class="fas fa-info-circle mr-2"></i>Basic Information
+                        <i aria-hidden="true" class="fas fa-info-circle mr-2"></i>Basic Information
                     </h2>
                     <dl class="space-y-3">
                         <div>
@@ -40,21 +40,13 @@
                             <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Status</dt>
                             <dd class="mt-1">
                                 @if($invitation->used_at)
-                                    <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                        <i class="fas fa-check-circle mr-1"></i>Used
-                                    </span>
+                                    <x-admin.badge tone="success" icon="fas fa-check-circle">Used</x-admin.badge>
                                 @elseif(!$invitation->is_active)
-                                    <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-                                        <i class="fas fa-ban mr-1"></i>Cancelled
-                                    </span>
+                                    <x-admin.badge tone="warning" icon="fas fa-ban">Cancelled</x-admin.badge>
                                 @elseif($invitation->expires_at && $invitation->expires_at->isPast())
-                                    <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                                        <i class="fas fa-clock mr-1"></i>Expired
-                                    </span>
+                                    <x-admin.badge tone="danger" icon="fas fa-clock">Expired</x-admin.badge>
                                 @else
-                                    <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                        <i class="fas fa-hourglass-half mr-1"></i>Pending
-                                    </span>
+                                    <x-admin.badge tone="primary" icon="fas fa-hourglass-half">Pending</x-admin.badge>
                                 @endif
                             </dd>
                         </div>
@@ -68,9 +60,9 @@
                             <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Active</dt>
                             <dd class="mt-1 text-sm text-gray-900 dark:text-gray-200">
                                 @if($invitation->is_active)
-                                    <span class="text-green-600 dark:text-green-400"><i class="fas fa-check-circle"></i> Yes</span>
+                                    <span class="text-success-600 dark:text-success-400"><i aria-hidden="true" class="fas fa-check-circle"></i> Yes</span>
                                 @else
-                                    <span class="text-red-600 dark:text-red-400"><i class="fas fa-times-circle"></i> No</span>
+                                    <span class="text-danger-600 dark:text-danger-400"><i aria-hidden="true" class="fas fa-times-circle"></i> No</span>
                                 @endif
                             </dd>
                         </div>
@@ -80,7 +72,7 @@
                 <!-- User Information -->
                 <div class="bg-gray-50 dark:bg-gray-900 p-6 rounded-lg">
                     <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                        <i class="fas fa-users mr-2"></i>User Information
+                        <i aria-hidden="true" class="fas fa-users mr-2"></i>User Information
                     </h2>
                     <dl class="space-y-3">
                         <div>
@@ -115,7 +107,7 @@
                 <!-- Timestamp Information -->
                 <div class="bg-gray-50 dark:bg-gray-900 p-6 rounded-lg">
                     <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                        <i class="fas fa-clock mr-2"></i>Timestamps
+                        <i aria-hidden="true" class="fas fa-clock mr-2"></i>Timestamps
                     </h2>
                     <dl class="space-y-3">
                         <div>
@@ -139,7 +131,7 @@
                                     {{ formatDateTimeSeconds($invitation->expires_at) }}
                                     <span class="text-gray-500 dark:text-gray-400">({{ $invitation->expires_at->diffForHumans() }})</span>
                                     @if($invitation->expires_at->isPast())
-                                        <span class="ml-2 text-red-600 dark:text-red-400"><i class="fas fa-exclamation-triangle"></i> Expired</span>
+                                        <span class="ml-2 text-danger-600 dark:text-danger-400"><i aria-hidden="true" class="fas fa-exclamation-triangle"></i> Expired</span>
                                     @endif
                                 @else
                                     <span class="text-gray-500 dark:text-gray-400">Never</span>
@@ -163,7 +155,7 @@
                 <!-- Additional Information -->
                 <div class="bg-gray-50 dark:bg-gray-900 p-6 rounded-lg">
                     <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                        <i class="fas fa-list mr-2"></i>Additional Information
+                        <i aria-hidden="true" class="fas fa-list mr-2"></i>Additional Information
                     </h2>
                     <dl class="space-y-3">
                         <div>
@@ -173,8 +165,8 @@
                                     <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded break-all font-mono text-xs">
                                         {{ url('register?invitation=' . $invitation->token) }}
                                     </div>
-                                    <button x-data="copyToClipboard()" @click="copy('invitation-link-{{ $invitation->id }}')" class="mt-2 px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
-                                        <i class="fas fa-copy mr-1"></i><span x-text="copied ? 'Copied!' : 'Copy Link'"></span>
+                                    <button x-data="copyToClipboard()" @click="copy('invitation-link-{{ $invitation->id }}')" class="mt-2 px-3 py-1 bg-accent text-white text-xs rounded hover:bg-accent-hover">
+                                        <i aria-hidden="true" class="fas fa-copy mr-1"></i><span x-text="copied ? 'Copied!' : 'Copy Link'"></span>
                                     </button>
                                     <input type="hidden" id="invitation-link-{{ $invitation->id }}" value="{{ url('register?invitation=' . $invitation->token) }}" />
                                 @else
@@ -193,5 +185,4 @@
     </x-admin.card>
 </div>
 
-{{-- Scripts moved to resources/js/csp-safe.js --}}
 @endsection

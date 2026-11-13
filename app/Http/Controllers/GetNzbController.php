@@ -8,6 +8,7 @@ use App\Models\Release;
 use App\Models\User;
 use App\Models\UserDownload;
 use App\Models\UsersRelease;
+use App\Services\Api\ApiUserResolver;
 use App\Services\Nzb\NzbService;
 use App\Support\FilenameSanitizer;
 use Exception;
@@ -166,7 +167,8 @@ class GetNzbController extends BasePageController
             return $this->apiError(200);
         }
 
-        $user = User::findVerifiedByApiToken((string) $request->input('r'));
+        // Same cached lookup as API v1, so a download does not reload the user, role and roles.
+        $user = app(ApiUserResolver::class)->v1((string) $request->input('r'));
         if (! $user) {
             return $this->apiError(100);
         }
@@ -279,8 +281,7 @@ class GetNzbController extends BasePageController
         Release::updateGrabsByGuids($guids);
         UserDownload::addDownloadRequestsBatch($uid, $releaseIds);
 
-        $shouldDeleteFromCart = $request->has('del') && (int) $request->input('del') === 1;
-        if ($shouldDeleteFromCart && $releaseIds !== []) {
+        if ($this->cartRemovalRequested($request) && $releaseIds !== []) {
             UsersRelease::delCartByUserAndReleases($uid, $releaseIds);
         }
     }
@@ -294,16 +295,16 @@ class GetNzbController extends BasePageController
         string $rssToken,
         string $releaseId
     ): JsonResponse|Response|StreamedResponse {
-        // Get NZB file path and validate
-        $nzbPath = app(NzbService::class)->nzbPath($releaseId);
-        if ($nzbPath === false) {
-            return $this->apiError(300, 'NZB file not found!');
-        }
-
-        // Get release data
-        $releaseData = Release::getByGuid($releaseId);
+        // Get release data first so the NZB path is only built for a stored release
+        $releaseData = Release::getForNzbDownload($releaseId);
         if ($releaseData === null) {
             return $this->apiError(300, 'Release not found!');
+        }
+
+        // Get NZB file path and validate
+        $nzbPath = app(NzbService::class)->nzbPath((string) $releaseData->guid);
+        if ($nzbPath === false) {
+            return $this->apiError(300, 'NZB file not found!');
         }
 
         // Update statistics
@@ -339,13 +340,22 @@ class GetNzbController extends BasePageController
      */
     private function updateDownloadStatistics(Request $request, int $uid, string $releaseId, int $releaseDbId): void
     {
-        Release::updateGrab($releaseId);
+        Release::updateGrab($releaseId, $releaseDbId);
         UserDownload::addDownloadRequest($uid, $releaseDbId);
         User::incrementGrabs($uid);
 
-        if ($request->has('del') && (int) $request->input('del') === 1) {
+        if ($this->cartRemovalRequested($request)) {
             UsersRelease::delCartByUserAndRelease($releaseId, $uid);
         }
+    }
+
+    /**
+     * `del=1` is for feed downloaders that sign in with their API token. A browser session is ignored,
+     * so a link on another site cannot empty a logged-in user's cart.
+     */
+    private function cartRemovalRequested(Request $request): bool
+    {
+        return $request->user() === null && (int) $request->input('del') === 1;
     }
 
     /**

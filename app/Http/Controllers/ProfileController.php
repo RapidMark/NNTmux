@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Enums\ColorScheme;
+use App\Enums\ThemePreference;
 use App\Http\Requests\UpdateThemeRequest;
 use App\Jobs\SendAccountDeletedEmail;
 use App\Models\Category;
@@ -26,6 +28,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use PragmaRX\Google2FALaravel\Facade as Google2FA;
 
 class ProfileController extends BasePageController
@@ -37,7 +40,9 @@ class ProfileController extends BasePageController
     {
 
         $userID = $this->userdata->id;
-        $privileged = $this->userdata->hasRole('Admin') || $this->userdata->hasRole('Moderator');
+        $viewerId = $this->userdata->id;
+        $viewerIsAdmin = $this->userdata->hasRole('Admin');
+        $privileged = $viewerIsAdmin || $this->userdata->hasRole('Moderator');
         $privateProfiles = config('nntmux_settings.private_profiles');
         $publicView = false;
 
@@ -60,10 +65,12 @@ class ProfileController extends BasePageController
                 if ($user) {
                     $this->userdata = $user;
                     $userID = $altID;
-                    $publicView = true;
                 }
             }
         }
+
+        // Any profile other than the viewer's own is a public view, so private fields stay hidden.
+        $publicView = (int) $userID !== (int) $viewerId;
 
         if ($this->userdata === null) { // @phpstan-ignore identical.alwaysFalse
             return $this->show404('No such user!');
@@ -92,7 +99,7 @@ class ProfileController extends BasePageController
             'privateprofiles' => $privateProfiles,
             'publicview' => $publicView,
             'privileged' => $privileged,
-            'isadmin' => $this->userdata->hasRole('Admin'),
+            'isadmin' => $viewerIsAdmin,
             'commentslist' => ReleaseComment::getCommentsForUserRange($userID),
             'downloadsHourly' => $downloadsHourly,
             'apiRequestsHourly' => $apiRequestsHourly,
@@ -141,7 +148,12 @@ class ProfileController extends BasePageController
             case 'clearcookies':
                 return redirect()->to('profileedit');
             case 'submit':
-                $validator = Validator::make($request->all(), $this->profileValidationRules($userid));
+                $emailChanging = $this->isChangingEmail($request);
+                $validator = Validator::make(
+                    $request->all(),
+                    $this->profileValidationRules($userid, $emailChanging),
+                    $this->profileValidationMessages()
+                );
 
                 if ($validator->fails()) {
                     $errorStr = implode('', Arr::collapse($validator->errors()->toArray()));
@@ -166,7 +178,7 @@ class ProfileController extends BasePageController
                     // Update theme preference
                     if ($request->has('theme_preference')) {
                         $themeValue = $request->input('theme_preference');
-                        if (in_array($themeValue, ['light', 'dark', 'system'], true)) {
+                        if (ThemePreference::tryFrom((string) $themeValue) !== null) {
                             User::where('id', $userid)->update(['theme_preference' => $themeValue]);
                         }
                     }
@@ -174,7 +186,7 @@ class ProfileController extends BasePageController
                     // Update color scheme
                     if ($request->has('color_scheme')) {
                         $schemeValue = $request->input('color_scheme');
-                        if (in_array($schemeValue, ['blue', 'indigo', 'cyan', 'teal', 'emerald', 'violet', 'pink', 'rose', 'red', 'orange', 'amber'], true)) {
+                        if (ColorScheme::tryFrom((string) $schemeValue) !== null) {
                             User::where('id', $userid)->update(['color_scheme' => $schemeValue]);
                         }
                     }
@@ -203,8 +215,8 @@ class ProfileController extends BasePageController
                     }
 
                     if (! $this->userdata->hasRole('Admin')) {
-                        if (! empty($request->input('email')) && $this->userdata->email !== $request->input('email')) {
-                            $this->userdata->email = $request->input('email');
+                        if ($emailChanging) {
+                            $this->userdata->email = trim((string) $request->input('email'));
                             $this->userdata->resetEmailVerification();
                             $this->userdata->sendEmailVerificationNotification();
 
@@ -313,13 +325,37 @@ class ProfileController extends BasePageController
     }
 
     /**
+     * Whether the submitted email differs from the account's current email.
+     */
+    private function isChangingEmail(Request $request): bool
+    {
+        $email = trim((string) $request->input('email', ''));
+
+        return $email !== '' && $email !== (string) $this->userdata->email;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function profileValidationMessages(): array
+    {
+        $message = 'Enter your current password to change your email address or password.';
+
+        return [
+            'current_password.required' => $message,
+            'current_password.required_with' => $message,
+        ];
+    }
+
+    /**
      * @return array<string, list<mixed>>
      */
-    protected function profileValidationRules(int $userId): array
+    protected function profileValidationRules(int $userId, bool $emailChanging): array
     {
         return [
             'email' => ['nullable', 'string', 'email', 'max:255', 'unique:users,email,'.$userId, new ValidEmailDomain],
-            'current_password' => ['nullable', 'required_with:password', 'current_password'],
+            // A stolen session must not be able to move the account to another inbox or set a new password.
+            'current_password' => ['nullable', 'required_with:password', Rule::requiredIf($emailChanging), 'current_password'],
             'password' => ['nullable', 'string', 'min:8', 'confirmed', 'regex:/^(?=.*?[A-Z])(?=.*?[a-z])(?=.*?[0-9])(?=.*?[#?!@$%^&*-]).{8,}$/'],
         ];
     }

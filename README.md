@@ -1,4 +1,11 @@
 <p align="center">
+    <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="public/assets/images/brand/nntmux-logo-light.svg">
+        <img src="public/assets/images/brand/nntmux-logo.svg" alt="NNTmux" width="360">
+    </picture>
+</p>
+
+<p align="center">
     <a href="https://packagist.org/packages/nntmux/newznab-tmux"><img src="https://poser.pugx.org/nntmux/newznab-tmux/v/stable.svg" alt="Latest Stable Version"></a>
     <a href="https://packagist.org/packages/nntmux/newznab-tmux"><img src="https://poser.pugx.org/nntmux/newznab-tmux/license.svg" alt="License"></a>
     <a href="https://www.patreon.com/bePatron?u=6160908"><img src="https://c5.patreon.com/external/logo/become_a_patron_button.png" alt="Become a Patron!" height="20"></a>
@@ -8,7 +15,7 @@
 
 NNTmux is a modern Usenet indexer built on Laravel, designed for high performance and scalability. It automatically scans Usenet, collects headers, and organizes them into searchable releases. The project is actively maintained and features multi-threaded processing, advanced search, and a web-based front-end with API access.
 
-This project is a fork of [newznab plus](https://github.com/anth0/nnplus) and [nZEDb](https://github.com/nZEDb/nZEDb), with significant improvements:
+This project is a fork of newznab plus and [nZEDb](https://github.com/nZEDb/nZEDb), with significant improvements:
 
 - Multi-threaded processing (header retrieval, release creation, post-processing)
 - Advanced search (name, subject, category, post-date)

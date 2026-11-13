@@ -4,15 +4,15 @@
      @if(! empty($grafanaTokenUrl)) data-token-url="{{ $grafanaTokenUrl }}" @endif>
     <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-200 flex items-center">
-            <i class="fas fa-server mr-2 text-orange-600 dark:text-orange-400"></i>
+            <i aria-hidden="true" class="fas fa-server mr-2 text-orange-600 dark:text-orange-400"></i>
             System Resources
         </h3>
-        <a href="{{ route('admin.monitoring') }}" class="text-sm font-semibold text-blue-600 hover:underline dark:text-blue-400">
+        <a href="{{ route('admin.monitoring') }}" class="text-sm font-semibold text-link hover:underline dark:text-primary-400">
             <i class="fas fa-chart-area mr-1" aria-hidden="true"></i>Full monitoring
         </a>
     </div>
 
-    <p x-show="error" x-cloak x-text="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200"></p>
+    <p x-show="error" x-cloak x-text="error" class="mb-4 rounded-lg bg-danger-50 px-4 py-3 text-sm text-danger-800 dark:bg-danger-900/30 dark:text-danger-200"></p>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         @foreach($grafanaPanels as $panel)

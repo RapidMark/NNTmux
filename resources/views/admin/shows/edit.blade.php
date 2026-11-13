@@ -2,17 +2,18 @@
 
 @section('content')
 <div class="space-y-6">
+    <x-admin.page-header :title="$title" icon="fas fa-edit">
+        <x-slot:actions>
+            <x-admin.button :href="route('admin.show-list')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
+        </x-slot:actions>
+    </x-admin.page-header>
     <x-admin.card>
-        <x-admin.page-header :title="$title" icon="fas fa-edit">
-            <x-slot:actions>
-                <x-admin.button :href="route('admin.show-list')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
-            </x-slot:actions>
-        </x-admin.page-header>
 
         <!-- Edit Form -->
         <div class="p-6">
             <form method="POST" action="{{ url('admin/show-edit?id=' . $show['id']) }}">
                 @csrf
+                <x-form-errors class="mb-6" />
                 <input type="hidden" name="action" value="submit">
                 <input type="hidden" name="id" value="{{ $show['id'] }}">
 
@@ -22,12 +23,12 @@
                         <!-- Title -->
                         <div>
                             <label for="title" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Title <span class="text-red-500">*</span>
+                                Title <span class="text-danger-500">*</span>
                             </label>
                             <input type="text"
                                    id="title"
                                    name="title"
-                                   value="{{ $show['title'] ?? '' }}"
+                                   value="{{ old('title', $show['title'] ?? '') }}"
                                    readonly
                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md bg-gray-100 dark:bg-gray-900">
                             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Title is read-only</p>
@@ -57,7 +58,7 @@
                             <input type="text"
                                    id="started"
                                    name="started"
-                                   value="{{ $show['started'] ?? '' }}"
+                                   value="{{ old('started', $show['started'] ?? '') }}"
                                    readonly
                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md bg-gray-100 dark:bg-gray-900">
                         </div>
@@ -70,7 +71,7 @@
                             <input type="text"
                                    id="countries_id"
                                    name="countries_id"
-                                   value="{{ $show['countries_id'] ?? '' }}"
+                                   value="{{ old('countries_id', $show['countries_id'] ?? '') }}"
                                    readonly
                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md bg-gray-100 dark:bg-gray-900">
                         </div>
@@ -140,7 +141,7 @@
                                          data-fallback-src="{{ asset('images/no-cover.png') }}">
                                 @else
                                     <div class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500">
-                                        <i class="fas fa-tv text-6xl mb-3"></i>
+                                        <i aria-hidden="true" class="fas fa-tv text-6xl mb-3"></i>
                                         <p>No cover image available</p>
                                     </div>
                                 @endif
@@ -167,7 +168,7 @@
                             <input type="text"
                                    id="publisher"
                                    name="publisher"
-                                   value="{{ $show['publisher'] ?? '' }}"
+                                   value="{{ old('publisher', $show['publisher'] ?? '') }}"
                                    readonly
                                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md bg-gray-100 dark:bg-gray-900">
                         </div>
@@ -208,10 +209,10 @@
                 <!-- Action Buttons -->
                 <div class="mt-6 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-6">
                     <a href="{{ route('admin.show-list') }}" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
-                        <i class="fas fa-arrow-left mr-2"></i>Back to List
+                        <i aria-hidden="true" class="fas fa-arrow-left mr-2"></i>Back to List
                     </a>
-                    <div class="text-sm text-yellow-600 dark:text-yellow-400">
-                        <i class="fas fa-info-circle mr-1"></i>This is a view-only page. TV show data is automatically fetched from external sources.
+                    <div class="text-sm text-warning-600 dark:text-warning-400">
+                        <i aria-hidden="true" class="fas fa-info-circle mr-1"></i>This is a view-only page. TV show data is automatically fetched from external sources.
                     </div>
                 </div>
             </form>

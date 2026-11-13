@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\View\Composers;
 
+use App\Enums\ColorScheme;
+use App\Enums\ThemePreference;
 use App\Models\Category;
 use App\Models\Content;
 use App\Models\User;
+use App\Models\UsersRelease;
 use App\Services\Configuration\ConfigurationProvider;
 use App\Services\SiteLogoService;
 use Illuminate\Database\Eloquent\Builder;
@@ -90,16 +93,17 @@ class GlobalDataComposer
                 'ismod' => $userdata->hasRole('Moderator'),
                 'parentcatlist' => $parentcatlist,
                 'header_menu_cat' => request()->input('t', ''),
-                'userTheme' => $userdata->theme_preference ?? 'light',
-                'userColorScheme' => $userdata->color_scheme ?? 'blue',
+                'cartCount' => UsersRelease::query()->where('users_id', $userId)->count(),
+                'userTheme' => ThemePreference::fromPreference($userdata->theme_preference)->value,
+                'userColorScheme' => ColorScheme::fromPreference($userdata->color_scheme)->value,
             ]);
         } else {
             $viewData = array_merge($viewData, [
                 'isadmin' => false,
                 'ismod' => false,
                 'loggedin' => false,
-                'userTheme' => 'light',
-                'userColorScheme' => 'blue',
+                'userTheme' => ThemePreference::default()->value,
+                'userColorScheme' => ColorScheme::default()->value,
             ]);
         }
 

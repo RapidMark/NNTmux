@@ -2,14 +2,14 @@
 
 @section('content')
 <div class="space-y-6">
+    <x-admin.page-header :title="$title ?? 'Binary Black/White List'" icon="fas fa-ban">
+        <x-slot:actions>
+            <a href="{{ url('/admin/binaryblacklist-edit') }}" class="px-4 py-2 bg-accent dark:bg-accent-hover text-white rounded-lg hover:bg-accent-hover dark:hover:bg-primary-800">
+                <i aria-hidden="true" class="fas fa-plus mr-2"></i>Add New Blacklist
+            </a>
+        </x-slot:actions>
+    </x-admin.page-header>
     <x-admin.card>
-        <x-admin.page-header :title="$title ?? 'Binary Black/White List'" icon="fas fa-ban">
-            <x-slot:actions>
-                <a href="{{ url('/admin/binaryblacklist-edit') }}" class="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800">
-                    <i class="fas fa-plus mr-2"></i>Add New Blacklist
-                </a>
-            </x-slot:actions>
-        </x-admin.page-header>
 
         <x-admin.info-alert>
             Binaries can be prevented from being added to the index if they match a regex in the blacklist.
@@ -17,8 +17,7 @@
             <strong>Click Edit or on the blacklist to enable/disable.</strong>
         </x-admin.info-alert>
 
-        <!-- Messages -->
-        <div id="message" class="px-6"></div>
+        <x-admin.list-search :action="route('admin.binaryblacklist-list')" :value="$lastSearch ?? ''" placeholder="Search by group, regex or description" label="Search the blacklist" />
 
         @if(count($binlist) > 0)
             <x-admin.data-table>
@@ -49,30 +48,30 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-center">
                             @if($bin->optype == 1)
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300">Black</span>
+                                <x-admin.badge tone="danger">Black</x-admin.badge>
                             @else
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">White</span>
+                                <x-admin.badge tone="success">White</x-admin.badge>
                             @endif
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-center">
                             @if($bin->msgcol == 1)
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">Subject</span>
+                                <x-admin.badge tone="primary">Subject</x-admin.badge>
                             @elseif($bin->msgcol == 2)
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300">Poster</span>
+                                <x-admin.badge tone="warning">Poster</x-admin.badge>
                             @else
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300">MessageID</span>
+                                <x-admin.badge tone="neutral">MessageID</x-admin.badge>
                             @endif
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-center">
                             @if($bin->status == 1)
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200">Active</span>
+                                <x-admin.badge tone="success">Active</x-admin.badge>
                             @else
-                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200">Disabled</span>
+                                <x-admin.badge tone="danger">Disabled</x-admin.badge>
                             @endif
                         </td>
                         <td class="px-6 py-4 text-sm">
                             <div class="max-w-[200px] wrap-break-word">
-                                <a href="{{ url('/admin/binaryblacklist-edit?id=' . $bin->id) }}" class="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300" title="{{ htmlspecialchars($bin->regex) }}">
+                                <a href="{{ url('/admin/binaryblacklist-edit?id=' . $bin->id) }}" class="text-link dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300" title="{{ htmlspecialchars($bin->regex) }}">
                                     <code class="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1 rounded text-xs break-all">{{ htmlspecialchars($bin->regex) }}</code>
                                 </a>
                             </div>
@@ -80,7 +79,7 @@
                         <td class="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 dark:text-gray-400">
                             @if($bin->last_activity)
                                 <span title="{{ $bin->last_activity }}">
-                                    <i class="fas fa-clock mr-1 text-gray-400"></i>{{ $bin->last_activity }}
+                                    <i aria-hidden="true" class="fas fa-clock mr-1 text-gray-400"></i>{{ $bin->last_activity }}
                                 </span>
                             @else
                                 <span class="text-gray-400 dark:text-gray-500">Never</span>
@@ -88,17 +87,24 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
                             <div class="flex gap-2 justify-center">
-                                <a href="{{ url('/admin/binaryblacklist-edit?id=' . $bin->id) }}"
-                                   class="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300"
+                                <a aria-label="Edit this blacklist" href="{{ url('/admin/binaryblacklist-edit?id=' . $bin->id) }}"
+                                   class="text-link dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
                                    title="Edit this blacklist">
-                                    <i class="fas fa-edit"></i>
+                                    <i aria-hidden="true" class="fas fa-edit"></i>
                                 </a>
-                                <button type="button"
-                                        class="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
-                                        data-delete-blacklist="{{ $bin->id }}"
-                                        title="Delete this blacklist">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                                <form action="{{ route('admin.binaryblacklist-delete', $bin->id) }}" method="post" class="inline"
+                                      x-data="confirmForm"
+                                      data-message="Are you sure you want to delete this blacklist?"
+                                      data-title="Delete Blacklist"
+                                      data-type="danger"
+                                      data-confirm-text="Delete"
+                                      @submit.prevent="submit()">
+                                    @csrf
+                                    <button aria-label="Delete this blacklist" type="submit" title="Delete this blacklist"
+                                            class="text-danger-600 dark:text-danger-400 hover:text-danger-900 dark:hover:text-danger-300">
+                                        <i aria-hidden="true" class="fas fa-trash"></i>
+                                    </button>
+                                </form>
                             </div>
                         </td>
                     </tr>
@@ -109,8 +115,8 @@
             <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
                 <div class="flex justify-between items-center">
                     <span class="text-sm text-gray-600 dark:text-gray-400">Total entries: {{ count($binlist) }}</span>
-                    <a href="{{ url('/admin/binaryblacklist-edit') }}" class="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800 text-sm">
-                        <i class="fas fa-plus mr-2"></i>Add New Blacklist
+                    <a href="{{ url('/admin/binaryblacklist-edit') }}" class="px-4 py-2 bg-accent dark:bg-accent-hover text-white rounded-lg hover:bg-accent-hover dark:hover:bg-primary-800 text-sm">
+                        <i aria-hidden="true" class="fas fa-plus mr-2"></i>Add New Blacklist
                     </a>
                 </div>
             </div>
