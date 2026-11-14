@@ -50,13 +50,14 @@ Alpine.data('qualityFilter', () => ({
         this.$el.querySelectorAll('[data-resolution]').forEach(btn => {
             const filter = btn.getAttribute('data-resolution');
             const isActive = filter === this.activeResolution;
+            btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
 
             // Remove all state classes first
-            btn.classList.remove('bg-blue-600', 'text-white', 'hover:bg-blue-700');
+            btn.classList.remove('bg-accent', 'text-white', 'hover:bg-accent-hover');
             btn.classList.remove('bg-gray-200', 'dark:bg-gray-700', 'text-gray-700', 'dark:text-gray-300', 'hover:bg-gray-300', 'dark:hover:bg-gray-600');
 
             if (isActive) {
-                btn.classList.add('bg-blue-600', 'text-white', 'hover:bg-blue-700');
+                btn.classList.add('bg-accent', 'text-white', 'hover:bg-accent-hover');
             } else {
                 btn.classList.add('bg-gray-200', 'dark:bg-gray-700', 'text-gray-700', 'dark:text-gray-300', 'hover:bg-gray-300', 'dark:hover:bg-gray-600');
             }
@@ -66,6 +67,7 @@ Alpine.data('qualityFilter', () => ({
         this.$el.querySelectorAll('[data-source]').forEach(btn => {
             const filter = btn.getAttribute('data-source');
             const isActive = filter === this.activeSource;
+            btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
 
             // Remove all state classes first
             btn.classList.remove('bg-purple-600', 'text-white', 'hover:bg-purple-700');

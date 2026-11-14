@@ -1,13 +1,14 @@
 @extends('layouts.main')
 
 @section('content')
+<x-page-header title="Books" :current="!empty($categorytitle) ? $categorytitle : 'All books'" eyebrow="Discover and download" description="Browse books, compare releases, and narrow the library by author, title, or category." icon="fas fa-book-open">
+    <x-slot:stats>
+        <span class="workspace-hero__stat"><i class="fas fa-book" aria-hidden="true"></i>{{ number_format($results->total()) }} books</span>
+        <span class="workspace-hero__stat"><i class="fas fa-folder-open" aria-hidden="true"></i>{{ $categorytitle ?: 'All books' }}</span>
+    </x-slot:stats>
+</x-page-header>
+
 <div class="surface-panel rounded-xl shadow-sm">
-    <x-page-header title="Books" :current="!empty($categorytitle) ? $categorytitle : 'All books'" eyebrow="Discover and download" description="Browse books, compare releases, and narrow the library by author, title, or category." icon="fas fa-book-open">
-        <x-slot:stats>
-            <span class="workspace-hero__stat"><i class="fas fa-book" aria-hidden="true"></i>{{ number_format($results->total()) }} books</span>
-            <span class="workspace-hero__stat"><i class="fas fa-folder-open" aria-hidden="true"></i>{{ $categorytitle ?: 'All books' }}</span>
-        </x-slot:stats>
-    </x-page-header>
 
     <div class="px-6 py-4">
         <!-- Search Filters -->
@@ -17,47 +18,33 @@
                     <!-- Author Filter -->
                     <div>
                         <label for="author" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Author</label>
-                        <input type="text"
+                        <x-input type="text"
                                id="author"
                                name="author"
                                value="{{ $author ?? '' }}"
-                               placeholder="Search by author"
-                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                               placeholder="Search by author" />
                     </div>
 
                     <!-- Title Filter -->
                     <div>
                         <label for="title" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Title</label>
-                        <input type="text"
+                        <x-input type="text"
                                id="title"
                                name="title"
                                value="{{ $title ?? '' }}"
-                               placeholder="Search by title"
-                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                               placeholder="Search by title" />
                     </div>
 
-                    <!-- Category Filter -->
-                    <div>
-                        <label for="category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
-                        <select id="category"
-                                name="t"
-                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                            <option value="">All Categories</option>
-                            @foreach($catlist ?? [] as $cat)
-                                <option value="{{ $cat['id'] }}" {{ ($category ?? '') == $cat['id'] ? 'selected' : '' }}>
-                                    {{ $cat['title'] }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
+                    {{-- Category is chosen with the Category dropdown in the results toolbar. --}}
+                    <input type="hidden" name="t" value="{{ $category ?? '' }}">
                 </div>
 
                 <div class="mt-4 flex gap-2">
-                    <button type="submit" class="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-md hover:bg-blue-700">
-                        <i class="fa fa-search mr-2"></i>Search
+                    <button type="submit" class="px-4 py-2 bg-accent dark:bg-accent-hover text-white rounded-md hover:bg-accent-hover">
+                        <i aria-hidden="true" class="fa-solid fa-search mr-2"></i>Search
                     </button>
                     <a href="{{ url('/Books/' . ($categorytitle ?: 'All')) }}" class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300">
-                        <i class="fa fa-times mr-2"></i>Clear
+                        <i aria-hidden="true" class="fa-solid fa-times mr-2"></i>Clear
                     </a>
                 </div>
             </form>
@@ -67,13 +54,15 @@
         @if(count($results) > 0)
             <x-cover-results-toolbar
                 :results="$results"
-                icon="fa fa-book"
+                icon="fa-solid fa-book"
                 :title="($catname ?? 'All') . ' Books'"
                 covgroup="books"
                 :category="$categorytitle ?? 'All'"
                 parentcat="Books"
                 search-placeholder="Search in Books..."
                 :search-category="$category ?? null"
+                :category-items="\App\Support\Navigation\ListFilters::categoryItems($catlist ?? [], $category ?? null, route('Books'), 'All books', true)"
+                :ordering="$ordering ?? null"
             />
 
             <!-- Books Grid -->
@@ -88,20 +77,20 @@
                     <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden hover:shadow-lg transition-shadow duration-200">
                         <a href="{{ $guid ? url('/details/' . $guid) : '#' }}" class="block relative">
                             @if(!empty($result->cover))
-                                <img src="{{ getImageAssetUrl('book', (string) $result->id, asset('assets/images/no-cover.png')) }}"
+                                <img width="320" height="480" src="{{ getImageAssetUrl('book', (string) $result->id, asset('assets/images/no-cover.png')) }}"
                                      alt="{{ $result->title }}"
                                      class="w-full h-64 object-cover"
                                      loading="lazy"
                                      data-fallback-src="{{ url('/images/no-cover.png') }}">
                             @else
                                 <div class="w-full h-64 bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                                    <i class="fa fa-book text-4xl text-gray-400"></i>
+                                    <i aria-hidden="true" class="fa-solid fa-book text-4xl text-gray-400"></i>
                                 </div>
                             @endif
                             @if($totalFailed > 0)
                                 <div class="absolute top-2 right-2">
-                                    <span class="px-2 py-1 bg-red-600 dark:bg-red-700 text-white text-xs rounded-full shadow-lg" title="{{ $totalFailed }} user(s) reported download failure">
-                                        <i class="fa fa-exclamation-triangle mr-1"></i>Failed
+                                    <span class="px-2 py-1 bg-danger-600 dark:bg-danger-700 text-white text-xs rounded-full shadow-lg" title="{{ $totalFailed }} user(s) reported download failure">
+                                        <i aria-hidden="true" class="fa-solid fa-exclamation-triangle mr-1"></i>Failed
                                     </span>
                                 </div>
                             @endif
@@ -121,16 +110,23 @@
                         </a>
                         @if($guid)
                             <div class="px-3 pb-3 flex gap-1">
-                                <a href="{{ url('/getnzb?id=' . $guid) }}"
-                                   class="flex-1 px-2 py-1 bg-green-600 dark:bg-green-700 text-white text-xs rounded hover:bg-green-700 dark:hover:bg-green-800 text-center"
+                                <a aria-label="Download NZB" href="{{ route('getnzb.guid', $guid) }}"
+                                   class="flex-1 px-2 py-1 bg-success-600 dark:bg-success-700 text-white text-xs rounded hover:bg-success-700 dark:hover:bg-success-800 text-center"
                                    title="Download NZB">
-                                    <i class="fa fa-download"></i>
+                                    <i aria-hidden="true" class="fa-solid fa-download"></i>
                                 </a>
-                                <a href="{{ url('/details/' . $guid) }}"
-                                   class="flex-1 px-2 py-1 bg-blue-600 dark:bg-blue-700 text-white text-xs rounded hover:bg-blue-700 dark:hover:bg-blue-800 text-center"
+                                <a aria-label="View Details" href="{{ url('/details/' . $guid) }}"
+                                   class="flex-1 px-2 py-1 bg-accent dark:bg-accent-hover text-white text-xs rounded hover:bg-accent-hover dark:hover:bg-primary-800 text-center"
                                    title="View Details">
-                                    <i class="fa fa-info-circle"></i>
+                                    <i aria-hidden="true" class="fa-solid fa-info-circle"></i>
                                 </a>
+                                <button type="button" aria-label="Add to basket" title="Add to basket" data-guid="{{ $guid }}"
+                                        class="add-to-cart flex-1 px-2 py-1 border border-line bg-surface text-fg text-xs rounded hover:bg-surface-hover text-center">
+                                    <i aria-hidden="true" class="icon_cart fa-solid fa-shopping-basket"></i>
+                                </button>
+                                @if(!empty($firstRelease->id))
+                                    <x-report-button :release-id="$firstRelease->id" :reported-count="(int) ($firstRelease->total_report_count ?? $firstRelease->report_count ?? 0)" />
+                                @endif
                             </div>
                         @endif
                     </div>
@@ -143,12 +139,12 @@
             </div>
         @else
             <x-empty-state
-                icon="fa fa-book"
+                icon="fa-solid fa-book"
                 title="No books found"
                 message="Try adjusting your search filters or browse all books."
                 :action-url="url('/Books/All')"
                 action-label="Browse All Books"
-                action-icon="fa fa-book"
+                action-icon="fa-solid fa-book"
             />
         @endif
     </div>

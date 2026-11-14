@@ -1,18 +1,20 @@
 @extends('layouts.guest')
 
+@section('title', __('Choose a new password'))
+
 @section('content')
 <div class="min-h-screen auth-page flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full space-y-8">
         <!-- Logo and Title -->
         <div class="text-center">
             <a href="{{ url('/') }}" class="inline-flex items-center justify-center mb-4">
-                <div class="w-16 h-16 bg-primary-600 dark:bg-primary-700 rounded-full flex items-center justify-center shadow-lg">
-                    <i class="fas fa-file-download text-3xl text-white"></i>
+                <div class="w-16 h-16 bg-accent dark:bg-accent-hover rounded-full flex items-center justify-center shadow-lg">
+                    <i aria-hidden="true" class="fas fa-file-download text-3xl text-white"></i>
                 </div>
             </a>
-            <h2 class="mt-4 text-4xl font-extrabold text-gray-900 dark:text-gray-100">
+            <h1 class="mt-4 text-4xl font-extrabold text-gray-900 dark:text-gray-100">
                 Set New Password
-            </h2>
+            </h1>
             <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 Choose a strong password for your account
             </p>
@@ -23,12 +25,12 @@
             <div class="px-8 py-6">
                 <!-- Error Messages -->
                 @if($errors->any())
-                    <div class="mb-4 p-4 rounded-lg bg-red-50 border border-red-200 dark:bg-red-900/30 dark:border-red-700">
+                    <div class="mb-4 p-4 rounded-lg bg-danger-50 border border-danger-200 dark:bg-danger-900/30 dark:border-danger-700">
                         <div class="flex items-start">
-                            <i class="fas fa-exclamation-circle text-red-600 dark:text-red-400 mr-3 mt-0.5"></i>
+                            <i aria-hidden="true" class="fas fa-exclamation-circle text-danger-600 dark:text-danger-400 mr-3 mt-0.5"></i>
                             <div class="flex-1">
-                                <p class="text-sm font-medium text-red-800 dark:text-red-200">There were some errors:</p>
-                                <ul class="mt-2 text-sm text-red-700 dark:text-red-300 list-disc list-inside">
+                                <p class="text-sm font-medium text-danger-800 dark:text-danger-200">There were some errors:</p>
+                                <ul class="mt-2 text-sm text-danger-700 dark:text-danger-300 list-disc list-inside">
                                     @foreach($errors->all() as $error)
                                         <li>{{ $error }}</li>
                                     @endforeach
@@ -50,7 +52,7 @@
                         </label>
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <i class="fas fa-envelope text-gray-400"></i>
+                                <i aria-hidden="true" class="fas fa-envelope text-gray-400"></i>
                             </div>
                             <input
                                 id="email"
@@ -70,21 +72,27 @@
                         <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                             New Password
                         </label>
-                        <div class="relative">
+                        <div class="relative" x-data="passwordToggle">
                             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <i class="fas fa-lock text-gray-400"></i>
+                                <i aria-hidden="true" class="fas fa-lock text-gray-400"></i>
                             </div>
                             <input
                                 id="password"
                                 type="password"
+                                x-ref="field"
+                                autocomplete="new-password"
+                                @error('password') aria-invalid="true" aria-describedby="password-error" @enderror
                                 name="password"
                                 required
-                                class="block w-full pl-10 pr-3 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition @error('password') border-red-500 @enderror"
+                                class="block w-full pl-10 pr-10 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition @error('password') border-danger-500 @enderror"
                                 placeholder="Enter your new password"
                             >
+                            <button type="button" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" @click="toggle()" aria-label="Show password" :aria-label="label()">
+                                <i class="fas" :class="iconClass()" aria-hidden="true"></i>
+                            </button>
                         </div>
                         @error('password')
-                            <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                            <p id="password-error" class="mt-2 text-sm text-danger-600 dark:text-danger-400">{{ $message }}</p>
                         @enderror
                         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Must be at least 8 characters</p>
                     </div>
@@ -94,18 +102,23 @@
                         <label for="password_confirmation" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                             Confirm New Password
                         </label>
-                        <div class="relative">
+                        <div class="relative" x-data="passwordToggle">
                             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <i class="fas fa-lock text-gray-400"></i>
+                                <i aria-hidden="true" class="fas fa-lock text-gray-400"></i>
                             </div>
                             <input
                                 id="password_confirmation"
                                 type="password"
+                                x-ref="field"
+                                autocomplete="new-password"
                                 name="password_confirmation"
                                 required
-                                class="block w-full pl-10 pr-3 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                class="block w-full pl-10 pr-10 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 dark:placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
                                 placeholder="Confirm your new password"
                             >
+                            <button type="button" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" @click="toggle()" aria-label="Show password" :aria-label="label()">
+                                <i class="fas" :class="iconClass()" aria-hidden="true"></i>
+                            </button>
                         </div>
                     </div>
 
@@ -113,9 +126,9 @@
                     <div class="pt-2">
                         <button
                             type="submit"
-                            class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 dark:bg-primary-700 hover:bg-primary-700 dark:hover:bg-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition duration-150 ease-in-out"
+                            class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-accent dark:bg-accent-hover hover:bg-accent-hover dark:hover:bg-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition duration-150 ease-in-out"
                         >
-                            <i class="fas fa-check-circle mr-2"></i>
+                            <i aria-hidden="true" class="fas fa-check-circle mr-2"></i>
                             Reset Password
                         </button>
                     </div>
@@ -125,8 +138,8 @@
             <!-- Card Footer -->
             <div class="px-8 py-4 surface-panel-alt border-t border-gray-200 dark:border-gray-700">
                 <div class="flex justify-center items-center text-sm">
-                    <a href="{{ route('login') }}" class="text-primary-600 dark:text-primary-400 hover:text-primary-500 font-medium transition">
-                        <i class="fas fa-arrow-left mr-1"></i> Back to login
+                    <a href="{{ route('login') }}" class="text-link dark:text-primary-400 hover:text-primary-500 font-medium transition">
+                        <i aria-hidden="true" class="fas fa-arrow-left mr-1"></i> Back to login
                     </a>
                 </div>
             </div>

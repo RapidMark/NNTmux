@@ -10,27 +10,23 @@
  */
 import Alpine from '@alpinejs/csp';
 import Chart from 'chart.js/auto';
-const STATUS_BADGE_CLASSES = {
-    operational: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200',
-    degraded: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200',
-    maintenance: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200',
-    partial_outage: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200',
-    major_outage: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200',
-};
-const IMPACT_BADGE_CLASSES = {
-    critical: 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200',
-    major: 'bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200',
-    minor: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200',
-};
+import { applyChartDefaults, observeTheme, seriesColors } from '../../lib/chart-theme.js';
+// Badge colour classes per status come from the PHP enums (data-badge-classes on the dashboard root),
+// so Blade and this script cannot drift apart.
+const BADGE_CLASSES = { service: {}, impact: {}, registration: {} };
+const NEUTRAL_BADGE_CLASSES = 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
 const SYSTEM_SERVICE_SLUGS = ['database', 'redis', 'queue', 'disk'];
-// Mirror of \App\Enums\RegistrationStatus values.
 const REGISTRATION_BADGE_BASE = 'inline-flex items-center justify-center rounded-full px-3 py-1.5 text-sm font-semibold ';
-const REGISTRATION_BADGE_CLASSES = {
-    0: 'border border-emerald-500/30 bg-emerald-600 text-white shadow-sm dark:border-emerald-300/20 dark:bg-emerald-500 dark:text-slate-950',
-    1: 'border border-amber-500/30 bg-amber-500 text-slate-950 shadow-sm dark:border-amber-200/20 dark:bg-amber-400 dark:text-slate-950',
-    2: 'border border-rose-500/30 bg-rose-600 text-white shadow-sm dark:border-rose-200/20 dark:bg-rose-500 dark:text-white',
-};
 const formatNumber = (value) => Number(value || 0).toLocaleString();
+/** Full literal class strings so Tailwind can see them (never build class names at runtime). */
+const SUMMARY_TONES = {
+    primary: { card: 'from-primary-50 to-primary-100 dark:from-primary-900 dark:to-primary-800', label: 'text-link dark:text-primary-300', value: 'text-primary-800 dark:text-primary-100' },
+    success: { card: 'from-success-50 to-success-100 dark:from-success-900 dark:to-success-800', label: 'text-success-700 dark:text-success-300', value: 'text-success-800 dark:text-success-100' },
+    violet: { card: 'from-violet-50 to-violet-100 dark:from-violet-900 dark:to-violet-800', label: 'text-violet-700 dark:text-violet-300', value: 'text-violet-800 dark:text-violet-100' },
+    orange: { card: 'from-orange-50 to-orange-100 dark:from-orange-900 dark:to-orange-800', label: 'text-orange-700 dark:text-orange-300', value: 'text-orange-800 dark:text-orange-100' },
+    pink: { card: 'from-pink-50 to-pink-100 dark:from-pink-900 dark:to-pink-800', label: 'text-pink-700 dark:text-pink-300', value: 'text-pink-800 dark:text-pink-100' },
+};
+
 const escapeHtml = (str) => String(str ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -38,16 +34,22 @@ const escapeHtml = (str) => String(str ?? '')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 const badgeClass = (status) => 'px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full '
-    + (STATUS_BADGE_CLASSES[status] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200');
+    + (BADGE_CLASSES.service[status] ?? NEUTRAL_BADGE_CLASSES);
 const registrationBadgeClass = (status) => REGISTRATION_BADGE_BASE
-    + (REGISTRATION_BADGE_CLASSES[status] ?? REGISTRATION_BADGE_CLASSES[2]);
+    + (BADGE_CLASSES.registration[status] ?? NEUTRAL_BADGE_CLASSES);
 Alpine.data('adminDashboard', () => ({
     _charts: [],
     _refreshInterval: null,
     _visibilityHandler: null,
     _lastRefreshAt: Date.now(),
     _isRefreshing: false,
+    loadError: false,
     init() {
+        try {
+            Object.assign(BADGE_CLASSES, JSON.parse(this.$el.dataset.badgeClasses || '{}'));
+        } catch (_error) {
+            // Fall back to neutral pills when the attribute is missing or malformed.
+        }
         this._loadDashboardData();
         this._scheduleRefresh();
     },
@@ -87,11 +89,18 @@ Alpine.data('adminDashboard', () => ({
                 this._renderSiteStatus(payload.serviceStatuses, payload.activeIncidents);
                 this._renderSystemServices(payload.serviceStatuses);
                 this._lastRefreshAt = Date.now();
+                this.loadError = false;
             })
-            .catch(() => {})
+            .catch(() => {
+                // Tell the admin instead of leaving the loading skeletons up forever.
+                this.loadError = true;
+            })
             .finally(() => {
                 this._isRefreshing = false;
             });
+    },
+    retry() {
+        this._loadDashboardData();
     },
     _swapWidget(name) {
         const widget = this.$el.querySelector(`[data-widget="${name}"]`);
@@ -149,18 +158,18 @@ Alpine.data('adminDashboard', () => ({
         if (!widget) return;
         const summary = stats.summary ?? {};
         const cards = [
-            { label: 'Total Users', value: summary.total_users, theme: 'blue' },
-            { label: 'Downloads Today', value: summary.downloads_today, theme: 'green' },
-            { label: 'Downloads (last 7d incl. today)', value: summary.downloads_week, theme: 'purple' },
-            { label: 'API/RSS Hits Today', value: summary.api_hits_today, theme: 'orange' },
-            { label: 'API/RSS Hits (last 7d incl. today)', value: summary.api_hits_week, theme: 'pink' },
+            { label: 'Total Users', value: summary.total_users, tone: 'primary' },
+            { label: 'Downloads Today', value: summary.downloads_today, tone: 'success' },
+            { label: 'Downloads (last 7d incl. today)', value: summary.downloads_week, tone: 'violet' },
+            { label: 'API/RSS Hits Today', value: summary.api_hits_today, tone: 'orange' },
+            { label: 'API/RSS Hits (last 7d incl. today)', value: summary.api_hits_week, tone: 'pink' },
         ];
         const summaryGrid = widget.querySelector('[data-summary-grid]');
         if (summaryGrid) {
             summaryGrid.innerHTML = cards.map(c => `
-                <div class="bg-linear-to-br from-${c.theme}-50 to-${c.theme}-100 dark:from-${c.theme}-900 dark:to-${c.theme}-800 rounded-lg p-4 text-center">
-                    <p class="text-sm text-${c.theme}-600 dark:text-${c.theme}-300 font-medium mb-1">${escapeHtml(c.label)}</p>
-                    <p class="text-2xl font-bold text-${c.theme}-800 dark:text-${c.theme}-100">${formatNumber(c.value)}</p>
+                <div class="bg-linear-to-br ${SUMMARY_TONES[c.tone].card} rounded-lg p-4 text-center">
+                    <p class="text-sm ${SUMMARY_TONES[c.tone].label} font-medium mb-1">${escapeHtml(c.label)}</p>
+                    <p class="text-2xl font-bold ${SUMMARY_TONES[c.tone].value}">${formatNumber(c.value)}</p>
                 </div>
             `).join('');
         }
@@ -177,7 +186,7 @@ Alpine.data('adminDashboard', () => ({
                     return `
                         <tr class="hover:bg-gray-100 dark:hover:bg-gray-800 transition">
                             <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">${escapeHtml(roleLabel)}</span>
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900 text-primary-800 dark:text-primary-200">${escapeHtml(roleLabel)}</span>
                             </td>
                             <td class="px-4 py-3 text-sm text-right text-gray-900 dark:text-gray-100 font-semibold">${formatNumber(r.count)}</td>
                             <td class="px-4 py-3 text-sm text-right text-gray-600 dark:text-gray-400">${pct}%</td>
@@ -187,11 +196,11 @@ Alpine.data('adminDashboard', () => ({
         const downloaders = stats.top_downloaders ?? [];
         const downloadersTbody = widget.querySelector('[data-downloaders-tbody]');
         if (downloadersTbody) {
-            const medalIcons = ['fa-medal text-yellow-500', 'fa-medal text-gray-400', 'fa-medal text-orange-600'];
+            const medalIcons = ['fa-medal text-amber-500', 'fa-medal text-gray-400', 'fa-medal text-orange-600'];
             downloadersTbody.innerHTML = downloaders.length === 0
                 ? '<tr><td colspan="3" class="px-4 py-3 text-sm text-center text-gray-500 dark:text-gray-400">No downloads in the last 7 days</td></tr>'
                 : downloaders.map((d, i) => {
-                    const rank = i < 3 ? `<i class="fas ${medalIcons[i]} text-lg"></i>` : `<span class="text-gray-500">${i + 1}</span>`;
+                    const rank = i < 3 ? `<i aria-hidden="true" class="fas ${medalIcons[i]} text-lg"></i>` : `<span class="text-gray-500">${i + 1}</span>`;
                     return `
                         <tr class="hover:bg-gray-100 dark:hover:bg-gray-800 transition">
                             <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">${rank}</td>
@@ -200,14 +209,10 @@ Alpine.data('adminDashboard', () => ({
                         </tr>`;
                 }).join('');
         }
-        this._renderChart('downloadsChart', 'bar', 'Downloads', stats.downloads_per_hour ?? [],
-            'rgba(34,197,94,0.7)', 'rgba(34,197,94,1)', false);
-        this._renderChart('apiHitsChart', 'line', 'API/RSS Hits', stats.api_hits_per_hour ?? [],
-            'rgba(168,85,247,0.2)', 'rgba(168,85,247,1)', true);
-        this._renderChart('downloadsMinuteChart', 'line', 'Downloads', stats.downloads_per_minute ?? [],
-            'rgba(34,197,94,0.2)', 'rgba(34,197,94,1)', true);
-        this._renderChart('apiHitsMinuteChart', 'line', 'API/RSS Hits', stats.api_hits_per_minute ?? [],
-            'rgba(168,85,247,0.2)', 'rgba(168,85,247,1)', true);
+        this._renderChart('downloadsChart', 'bar', 'Downloads', stats.downloads_per_hour ?? [], 'success', false);
+        this._renderChart('apiHitsChart', 'line', 'API/RSS Hits', stats.api_hits_per_hour ?? [], 'violet', true);
+        this._renderChart('downloadsMinuteChart', 'line', 'Downloads', stats.downloads_per_minute ?? [], 'success', true);
+        this._renderChart('apiHitsMinuteChart', 'line', 'API/RSS Hits', stats.api_hits_per_minute ?? [], 'violet', true);
     },
     _renderSystemMetrics(metrics) {
         if (!metrics) return;
@@ -229,18 +234,14 @@ Alpine.data('adminDashboard', () => ({
         const cpuModel = widget.querySelector('[data-metric="cpu-model"]');
         if (cpuModel && cpu.model && cpu.model !== 'Unknown') {
             cpuModel.title = cpu.model;
-            cpuModel.innerHTML = `<i class="fas fa-info-circle mr-1"></i>${escapeHtml(cpu.model)}`;
+            cpuModel.innerHTML = `<i aria-hidden="true" class="fas fa-info-circle mr-1"></i>${escapeHtml(cpu.model)}`;
         }
         setText('ram-current', `${Number(ram.percentage ?? 0).toFixed(1)}%`);
         setText('ram-details', `${Number(ram.used ?? 0).toFixed(2)} GB / ${Number(ram.total ?? 0).toFixed(2)} GB`);
-        this._renderPercentChart('cpuHistory24hChart', 'CPU Usage %', cpu.history_24h ?? [],
-            'rgba(249,115,22,0.2)', 'rgba(249,115,22,1)');
-        this._renderPercentChart('ramHistory24hChart', 'RAM Usage %', ram.history_24h ?? [],
-            'rgba(6,182,212,0.2)', 'rgba(6,182,212,1)');
-        this._renderPercentChart('cpuHistory30dChart', 'CPU Usage %', cpu.history_30d ?? [],
-            'rgba(249,115,22,0.2)', 'rgba(249,115,22,1)');
-        this._renderPercentChart('ramHistory30dChart', 'RAM Usage %', ram.history_30d ?? [],
-            'rgba(6,182,212,0.2)', 'rgba(6,182,212,1)');
+        this._renderPercentChart('cpuHistory24hChart', 'CPU Usage %', cpu.history_24h ?? [], 'orange');
+        this._renderPercentChart('ramHistory24hChart', 'RAM Usage %', ram.history_24h ?? [], 'cyan');
+        this._renderPercentChart('cpuHistory30dChart', 'CPU Usage %', cpu.history_30d ?? [], 'orange');
+        this._renderPercentChart('ramHistory30dChart', 'RAM Usage %', ram.history_30d ?? [], 'cyan');
     },
     _renderRecentActivity(activities) {
         const widget = this._swapWidget('recent-activity');
@@ -263,8 +264,8 @@ Alpine.data('adminDashboard', () => ({
             }
             return `
                 <div class="flex items-start activity-item rounded-lg p-2 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
-                    <div class="w-8 h-8 ${activity.icon_bg} rounded-full flex items-center justify-center mr-3 shrink-0">
-                        <i class="fas fa-${escapeHtml(activity.icon)} ${activity.icon_color} text-sm"></i>
+                    <div class="w-8 h-8 ${escapeHtml(activity.icon_classes ?? '')} rounded-full flex items-center justify-center mr-3 shrink-0">
+                        <i aria-hidden="true" class="fas fa-${escapeHtml(activity.icon)} text-sm"></i>
                     </div>
                     <div class="flex-1">
                         <p class="text-sm text-gray-800 dark:text-gray-200">${escapeHtml(activity.message)}${extra}</p>
@@ -285,8 +286,8 @@ Alpine.data('adminDashboard', () => ({
         if (!widget) return;
         const tbody = widget.querySelector('[data-payments-tbody]');
         if (!tbody) return;
-        const settledClasses = 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200';
-        const pendingClasses = 'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200';
+        const settledClasses = 'bg-success-100 dark:bg-success-900 text-success-800 dark:text-success-200';
+        const pendingClasses = 'bg-warning-100 dark:bg-warning-900 text-warning-800 dark:text-warning-200';
         const otherClasses = 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
         tbody.innerHTML = payments.map(p => {
             const status = String(p.payment_status ?? '');
@@ -327,14 +328,14 @@ Alpine.data('adminDashboard', () => ({
         const region = widget.querySelector('[data-incidents-region]');
         if (!region) return;
         if (!Array.isArray(incidents) || incidents.length === 0) {
-            region.innerHTML = '<p class="text-sm text-green-600 dark:text-green-400"><i class="fas fa-check-circle mr-1"></i>No active incidents</p>';
+            region.innerHTML = '<p class="text-sm text-success-600 dark:text-success-400"><i aria-hidden="true" class="fas fa-check-circle mr-1"></i>No active incidents</p>';
             return;
         }
         const visible = incidents.slice(0, 5);
         const overflow = incidents.length - visible.length;
         const items = visible.map(inc => {
             const impactClass = 'px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full shrink-0 '
-                + (IMPACT_BADGE_CLASSES[inc.impact] ?? 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200');
+                + (BADGE_CLASSES.impact[inc.impact] ?? NEUTRAL_BADGE_CLASSES);
             const autoBadge = inc.is_auto
                 ? '<span class="ml-1 px-1 py-0.5 text-[10px] leading-3 font-semibold rounded bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200">Auto</span>'
                 : '';
@@ -350,8 +351,8 @@ Alpine.data('adminDashboard', () => ({
                 </div>`;
         }).join('');
         region.innerHTML = `
-            <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-2">
-                <i class="fas fa-exclamation-triangle mr-1"></i>${incidents.length} Active Incident${incidents.length === 1 ? '' : 's'}
+            <h4 class="text-sm font-semibold text-danger-600 dark:text-danger-400 mb-2">
+                <i aria-hidden="true" class="fas fa-exclamation-triangle mr-1"></i>${incidents.length} Active Incident${incidents.length === 1 ? '' : 's'}
             </h4>
             <div class="space-y-2">${items}${overflow > 0 ? `<p class="text-xs text-gray-500 dark:text-gray-400 pt-1">+ ${overflow} more</p>` : ''}</div>
         `;
@@ -383,10 +384,13 @@ Alpine.data('adminDashboard', () => ({
             this._charts = this._charts.filter(c => c !== existing);
         }
     },
-    _renderChart(canvasId, type, label, data, backgroundColor, borderColor, fill) {
+    _renderChart(canvasId, type, label, data, tone, fill) {
         const canvas = document.getElementById(canvasId);
         if (!canvas || !Array.isArray(data) || data.length === 0) return;
         this._destroyChart(canvasId);
+        this._ensureChartTheme();
+        const fillAlpha = type === 'bar' ? 0.7 : 0.2;
+        const { backgroundColor, borderColor } = seriesColors(tone, fillAlpha);
         const chart = new Chart(canvas, {
             type,
             data: {
@@ -408,12 +412,15 @@ Alpine.data('adminDashboard', () => ({
                 plugins: { legend: { display: false } },
             },
         });
+        chart.$themeTone = { name: tone, fillAlpha };
         this._charts.push(chart);
     },
-    _renderPercentChart(canvasId, label, data, backgroundColor, borderColor) {
+    _renderPercentChart(canvasId, label, data, tone) {
         const canvas = document.getElementById(canvasId);
         if (!canvas || !Array.isArray(data) || data.length === 0) return;
         this._destroyChart(canvasId);
+        this._ensureChartTheme();
+        const { backgroundColor, borderColor } = seriesColors(tone, 0.2);
         const chart = new Chart(canvas, {
             type: 'line',
             data: {
@@ -435,7 +442,14 @@ Alpine.data('adminDashboard', () => ({
                 plugins: { legend: { display: false } },
             },
         });
+        chart.$themeTone = { name: tone, fillAlpha: 0.2 };
         this._charts.push(chart);
+    },
+    /** Apply token-based chart defaults once and keep charts in sync with theme changes. */
+    _ensureChartTheme() {
+        if (this._stopThemeObserver) return;
+        applyChartDefaults(Chart);
+        this._stopThemeObserver = observeTheme(Chart, () => this._charts);
     },
     _destroyCharts() {
         this._charts.forEach(chart => chart.destroy());
@@ -444,6 +458,7 @@ Alpine.data('adminDashboard', () => ({
     destroy() {
         if (this._refreshInterval) window.clearInterval(this._refreshInterval);
         if (this._visibilityHandler) document.removeEventListener('visibilitychange', this._visibilityHandler);
+        this._stopThemeObserver?.();
         this._destroyCharts();
     },
 }));

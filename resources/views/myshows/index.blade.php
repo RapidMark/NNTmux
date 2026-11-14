@@ -1,217 +1,81 @@
+@php
+    $rssFeedUrl = url("/rss/myshows?dl=1&i={$userdata->id}&api_token={$userdata->api_token}");
+    $showCount = count($shows ?? []);
+    $noCover = url('/covers/tvshows/no-cover.jpg');
+@endphp
+<x-page-header title="My TV shows" eyebrow="Your watchlist" description="Manage followed series and keep automatic updates flowing through your personal feed." icon="fas fa-tv">
+    <x-slot:stats>
+        <span class="workspace-hero__stat"><i class="fas fa-bookmark" aria-hidden="true"></i>{{ number_format($showCount) }} followed</span>
+    </x-slot:stats>
+    <x-slot:actions>
+        <a href="{{ route('series') }}" class="workspace-hero__action"><i class="fas fa-tv" aria-hidden="true"></i>Browse series</a>
+        <a href="{{ route('myshows.browse') }}" class="workspace-hero__action"><i class="fas fa-list" aria-hidden="true"></i>My show releases</a>
+        <a href="{{ $rssFeedUrl }}" class="workspace-hero__action"><i class="fas fa-rss" aria-hidden="true"></i>RSS feed</a>
+    </x-slot:actions>
+</x-page-header>
 
-<div class="max-w-7xl mx-auto">
-    <x-page-header title="My TV shows" eyebrow="Your watchlist" description="Manage followed series and keep automatic updates flowing through your personal feed." icon="fas fa-tv">
-        <x-slot:stats>
-            <span class="workspace-hero__stat"><i class="fas fa-bookmark" aria-hidden="true"></i>{{ number_format(count($shows ?? [])) }} followed</span>
-        </x-slot:stats>
-        <x-slot:actions>
-            <a href="{{ url('/browse/TV') }}" class="workspace-hero__action"><i class="fas fa-list" aria-hidden="true"></i>Browse all series</a>
-            <a href="{{ url('/myshows/browse') }}" class="workspace-hero__action"><i class="fas fa-search" aria-hidden="true"></i>View releases</a>
-        </x-slot:actions>
-    </x-page-header>
-
-    <!-- RSS Feed Info Card -->
-    <div class="info-card-gradient border-l-4 border-blue-500 rounded-lg p-5 mb-6 shadow">
-        <div class="flex items-start">
-            <div class="shrink-0">
-                <div class="flex items-center justify-center h-10 w-10 rounded-lg bg-blue-500 text-white">
-                    <i class="fa fa-rss text-lg"></i>
-                </div>
-            </div>
-            <div class="ml-4 flex-1">
-                <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">Automatic Downloads via RSS</h3>
-                <p class="text-sm text-gray-700 dark:text-gray-300">
-                    Bookmark your favorite series below. New episodes are automatically added to your
-                    <a href="{{ url("/rss/myshows?dl=1&i={$userdata->id}&api_token={$userdata->api_token}") }}"
-                       class="font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline inline-flex items-center">
-                        <i class="fa fa-rss mr-1"></i>personal RSS feed
-                    </a>
-                    for automatic downloading.
-                </p>
-            </div>
-        </div>
+<div class="surface-panel overflow-hidden rounded-xl shadow-sm">
+    <div class="flex flex-col gap-1 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <h2 class="flex items-center gap-2 text-base font-semibold text-fg">
+            <i aria-hidden="true" class="fa-solid fa-bookmark text-link"></i>Your shows
+            <span class="text-sm font-medium text-fg-muted tabular-nums">{{ $showCount }}</span>
+        </h2>
+        <p class="text-xs text-fg-muted">
+            <i aria-hidden="true" class="fa-solid fa-rss mr-1"></i>New episodes are added to your
+            <a href="{{ $rssFeedUrl }}" class="font-medium text-link hover:underline">personal RSS feed</a>.
+        </p>
     </div>
 
-    <!-- Action Buttons -->
-    <div class="flex flex-wrap gap-3 mb-6">
-        <a class="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800 shadow-md hover:shadow-lg transition-all duration-200 inline-flex items-center font-medium"
-           href="{{ url('/browse/TV') }}"
-           title="View available TV series">
-            <i class="fa fa-list mr-2"></i>Browse All Series
-        </a>
-        <a class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-md hover:shadow-lg transition-all duration-200 inline-flex items-center font-medium"
-           href="{{ url('/myshows/browse') }}"
-           title="View a list of all releases in your shows">
-            <i class="fa fa-search mr-2"></i>View Releases
-        </a>
-        <a class="px-6 py-3 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-2 border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500 shadow-md hover:shadow-lg transition-all duration-200 inline-flex items-center font-medium"
-           href="{{ url("/rss/myshows?dl=1&i={$userdata->id}&api_token={$userdata->api_token}") }}"
-           title="All releases in your shows as an RSS feed">
-            <i class="fa fa-rss mr-2 text-orange-500"></i>RSS Feed
-        </a>
-    </div>
-
-    <!-- Shows Table/Cards -->
-    @if(count($shows ?? []) > 0)
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-            <!-- Table Header -->
-            <div class="table-header-gradient px-6 py-4 border-b-2 border-gray-300 dark:border-gray-600">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center">
-                        <i class="fa fa-bookmark mr-2 text-blue-600"></i>
-                        Your Shows <span class="ml-2 px-3 py-1 bg-blue-600 dark:bg-blue-700 text-white text-sm rounded-full font-bold">{{ count($shows) }}</span>
-                    </h2>
-                </div>
-            </div>
-
-            <!-- Desktop Table View -->
-            <div class="hidden md:block overflow-x-auto">
-                <table class="min-w-full">
-                    <thead>
-                        <tr class="bg-gray-50 dark:bg-gray-700">
-                            <th scope="col" class="px-8 py-5 text-left text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                                Series Name
-                            </th>
-                            <th scope="col" class="px-8 py-5 text-left text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider col-width-180">
-                                Categories
-                            </th>
-                            <th scope="col" class="px-8 py-5 text-left text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider col-width-160">
-                                Added Date
-                            </th>
-                            <th scope="col" class="px-8 py-5 text-center text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider col-width-170">
-                                Actions
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white dark:bg-gray-800">
-                        @foreach($shows as $show)
-                            <tr class="hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                                <td class="px-8 py-5">
-                                    <div class="flex items-center">
-                                        <div class="shrink-0 h-12 w-12 show-avatar rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm">
-                                            {{ strtoupper(substr($show['title'] ?? 'T', 0, 1)) }}
-                                        </div>
-                                        <div class="ml-4">
-                                            <a class="text-base font-semibold text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                                               title="View series details"
-                                               href="{{ url("/series/{$show['videos_id']}") }}">
-                                                {{ $show['title'] ?? '' }}
-                                            </a>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="px-8 py-5">
-                                    @if(!empty($show['categoryNames']))
-                                        <span class="inline-flex items-center px-3 py-1.5 category-badge text-blue-800 text-xs font-semibold rounded-full border border-blue-200">
-                                            <i class="fa fa-folder-open mr-1.5"></i>{{ e($show['categoryNames']) }}
-                                        </span>
-                                    @else
-                                        <span class="inline-flex items-center px-3 py-1.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs font-semibold rounded-full border border-gray-300 dark:border-gray-600">
-                                            <i class="fa fa-folder mr-1.5"></i>All Categories
-                                        </span>
-                                    @endif
-                                </td>
-                                <td class="px-8 py-5">
-                                    <div class="flex flex-col">
-                                        <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                            {{ isset($show['created_at']) ? date('M d, Y', strtotime($show['created_at'])) : '' }}
-                                        </span>
-                                        <span class="text-xs text-gray-500 dark:text-gray-400 flex items-center mt-1">
-                                            <i class="fa fa-clock mr-1"></i>
-                                            {{ isset($show['created_at']) ? \Carbon\Carbon::parse($show['created_at'])->diffForHumans() : '' }}
-                                        </span>
-                                    </div>
-                                </td>
-                                <td class="px-8 py-5">
-                                    <div class="flex items-center justify-center gap-2">
-                                        <a class="inline-flex items-center px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 shadow hover:shadow-md transition-all duration-200 text-sm font-medium"
-                                           href="{{ url("/myshows?action=edit&id={$show['videos_id']}") }}"
-                                           title="Edit Categories">
-                                            <i class="fa fa-edit mr-1.5"></i>
-                                            <span class="hidden xl:inline">Edit</span>
-                                        </a>
-                                        <form method="POST" action="{{ url("/myshows?action=delete&id={$show['videos_id']}") }}" x-data="confirmForm" @submit.prevent="submit()" data-title="Remove Show" data-message="Are you sure you want to remove this show from your list?" data-confirm-text="Remove" data-type="danger">
-                                            @csrf
-                                            <button type="submit" class="inline-flex items-center px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 dark:bg-red-700 shadow hover:shadow-md transition-all duration-200 text-sm font-medium" title="Remove from My Shows">
-                                                <i class="fa fa-trash mr-1.5"></i>
-                                                <span class="hidden xl:inline">Delete</span>
-                                            </button>
-                                        </form>
-                                    </div>
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Mobile Card View -->
-            <div class="md:hidden">
-                @foreach($shows as $show)
-                    <div class="p-6 border-b border-gray-200 dark:border-gray-700 hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-150">
-                        <div class="flex items-start justify-between mb-4">
-                            <div class="flex items-center flex-1">
-                                <div class="shrink-0 h-12 w-12 show-avatar rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-sm">
-                                    {{ strtoupper(substr($show['title'] ?? 'T', 0, 1)) }}
-                                </div>
-                                <div class="ml-3 flex-1">
-                                    <a class="text-base font-semibold text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 block"
-                                       href="{{ url("/series/{$show['videos_id']}") }}">
-                                        {{ $show['title'] ?? '' }}
-                                    </a>
-                                    <div class="mt-1.5">
-                                        @if(!empty($show['categoryNames']))
-                                            <span class="inline-flex items-center px-2 py-1 category-badge text-blue-800 text-xs font-semibold rounded-full border border-blue-200">
-                                                <i class="fa fa-folder-open mr-1"></i>{{ e($show['categoryNames']) }}
-                                            </span>
-                                        @else
-                                            <span class="inline-flex items-center px-2 py-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs font-semibold rounded-full border border-gray-300 dark:border-gray-600">
-                                                All Categories
-                                            </span>
-                                        @endif
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                            <div class="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-                                <i class="fa fa-calendar mr-1"></i>
-                                {{ isset($show['created_at']) ? date('M d, Y', strtotime($show['created_at'])) : '' }}
-                            </div>
-                            <div class="flex gap-2">
-                                <a class="px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 text-sm font-medium shadow"
-                                   href="{{ url("/myshows?action=edit&id={$show['videos_id']}") }}"
-                                   title="Edit">
-                                    <i class="fa fa-edit"></i>
-                                </a>
-                                <form method="POST" action="{{ url("/myshows?action=delete&id={$show['videos_id']}") }}" x-data="confirmForm" @submit.prevent="submit()" data-title="Remove Show" data-message="Are you sure you want to remove this show from your list?" data-confirm-text="Remove" data-type="danger">
-                                    @csrf
-                                    <button type="submit" class="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 dark:bg-red-700 text-sm font-medium shadow" title="Remove">
-                                        <i class="fa fa-trash"></i>
-                                    </button>
-                                </form>
-                            </div>
+    @if($showCount > 0)
+        <ul class="divide-y divide-gray-200 dark:divide-gray-700">
+            @foreach($shows as $show)
+                @php
+                    $showTitle = (string) ($show['title'] ?? '');
+                    $meta = array_filter([
+                        $show['publisher'] ?? null,
+                        ! empty($show['started']) ? 'Since '.\Carbon\Carbon::parse($show['started'])->format('Y') : null,
+                    ]);
+                    $coverUrl = ! empty($show['image']) ? getImageAssetUrl('tvshows', (string) $show['videos_id'], $noCover) : $noCover;
+                @endphp
+                <li class="flex flex-col gap-3 px-4 py-3 transition hover:bg-surface-hover sm:flex-row sm:items-center sm:gap-4 sm:px-6">
+                    <div class="flex min-w-0 flex-1 items-start gap-3">
+                        <img width="48" height="72" class="aspect-[2/3] w-12 shrink-0 rounded-md object-cover shadow-sm"
+                             src="{{ $coverUrl }}" data-fallback-src="{{ $noCover }}" loading="lazy" decoding="async" alt="{{ $showTitle }} cover"/>
+                        <div class="min-w-0">
+                            <a class="font-semibold text-link hover:underline" title="View series details" href="{{ url("/series/{$show['videos_id']}") }}">{{ $showTitle }}</a>
+                            @if($meta !== [])
+                                <p class="truncate text-xs text-fg-muted" title="{{ implode(' · ', $meta) }}">{{ implode(' · ', $meta) }}</p>
+                            @endif
+                            @if(! empty($show['summary']))
+                                <p class="mt-1 hidden text-sm text-fg-muted lg:line-clamp-2">{{ $show['summary'] }}</p>
+                            @endif
                         </div>
                     </div>
-                @endforeach
-            </div>
-        </div>
+
+                    <div class="flex flex-wrap items-center gap-2 sm:w-64 sm:flex-col sm:items-start sm:gap-1">
+                        <x-badge :tone="! empty($show['categoryNames']) ? 'primary' : 'neutral'" icon="fa-solid fa-folder-open">
+                            {{ ! empty($show['categoryNames']) ? $show['categoryNames'] : 'All categories' }}
+                        </x-badge>
+                        @if(isset($show['created_at']))
+                            <span class="text-xs text-fg-muted"><i aria-hidden="true" class="fa-solid fa-clock mr-1"></i>Added {{ userDate($show['created_at'], 'M d, Y') }}</span>
+                        @endif
+                    </div>
+
+                    <div class="flex items-center gap-1 sm:justify-end">
+                        <x-icon-button size="sm" icon="fa-solid fa-pen" :label="'Edit categories for '.($show['title'] ?? 'this show')"
+                                       :href="url('/myshows?action=edit&id='.$show['videos_id'])" />
+                        <form method="POST" action="{{ url("/myshows?action=delete&id={$show['videos_id']}") }}"
+                              x-data="confirmForm" @submit.prevent="submit()" data-title="Remove show" data-message="Are you sure you want to remove this show from your list?" data-confirm-text="Remove" data-type="danger">
+                            @csrf
+                            <x-icon-button type="submit" size="sm" icon="fa-solid fa-trash" :label="'Remove '.($show['title'] ?? 'this show').' from My shows'" class="text-danger-600 dark:text-danger-400" />
+                        </form>
+                    </div>
+                </li>
+            @endforeach
+        </ul>
     @else
-        <!-- Empty State -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-            <div class="text-center py-16 px-6">
-                <div class="mx-auto h-24 w-24 empty-state-bg rounded-full flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa fa-tv text-5xl text-blue-600"></i>
-                </div>
-                <h3 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">No TV Shows Yet</h3>
-                <p class="text-gray-600 dark:text-gray-400 mb-6 max-w-md mx-auto">
-                    You haven't bookmarked any TV series yet. Start building your collection by browsing our series library.
-                </p>
-                <a href="{{ url('/browse/TV') }}"
-                   class="inline-flex items-center px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800 shadow-md hover:shadow-lg transition-all duration-200 font-medium">
-                    <i class="fa fa-search mr-2"></i>Browse Series Library
-                </a>
-            </div>
-        </div>
+        <x-empty-state icon="fas fa-tv" title="No TV shows yet"
+                       message="You haven't followed any series yet. Browse the series list and follow the ones you want new episodes for."
+                       :action-url="route('series')" action-label="Browse series" action-icon="fas fa-tv" />
     @endif
 </div>

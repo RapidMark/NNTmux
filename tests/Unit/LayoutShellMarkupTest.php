@@ -76,6 +76,39 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringNotContainsString('assets/images/logo.svg', $this->view('layouts/main.blade.php'));
     }
 
+    public function test_every_layout_shares_theme_metas_and_loads_them_before_app_js(): void
+    {
+        foreach (['main', 'admin', 'guest'] as $layout) {
+            $markup = $this->view("layouts/{$layout}.blade.php");
+
+            $this->assertStringContainsString("@include('partials.theme-meta')", $markup, $layout);
+            $this->assertStringNotContainsString('<meta name="theme-preference"', $markup, "{$layout} must not hard-code the theme meta");
+            $this->assertLessThan(strpos($markup, '@vite('), strpos($markup, "@include('partials.theme-meta')"), $layout);
+        }
+
+        $meta = $this->view('partials/theme-meta.blade.php');
+        $this->assertStringContainsString('name="color-scheme-preference"', $meta);
+        $this->assertStringContainsString('name="user-authenticated"', $meta);
+        $this->assertStringContainsString("route('profile.update-theme')", $meta);
+    }
+
+    public function test_user_shell_uses_header_navigation_and_real_page_headings(): void
+    {
+        $main = $this->view('layouts/main.blade.php');
+        $sidebar = $this->view('partials/sidebar.blade.php');
+
+        $this->assertStringNotContainsString('layout-mobile-sidebar-toggle', $main, 'The floating "Navigate" pill was replaced by the top bar button.');
+        $this->assertStringContainsString("@include('partials.guest-topbar')", $main);
+        $this->assertStringContainsString('id="theme-toggle"', $this->view('partials/guest-topbar.blade.php'));
+        $this->assertStringContainsString('<x-nav-link', $sidebar);
+
+        foreach (glob(__DIR__.'/../../resources/views/auth/{,passwords/}*.blade.php', GLOB_BRACE) ?: [] as $page) {
+            if (str_contains((string) file_get_contents($page), '@extends')) {
+                $this->assertStringContainsString('<h1', (string) file_get_contents($page), basename($page).' needs a page heading');
+            }
+        }
+    }
+
     public function test_mobile_sidebar_script_supports_dismissal_and_focus_state(): void
     {
         $script = $this->resource('js/alpine/components/mobile-nav.js');
@@ -92,7 +125,12 @@ class LayoutShellMarkupTest extends TestCase
 
         $this->assertStringContainsString(':focus-visible', $stylesheet);
         $this->assertStringContainsString('@media (prefers-reduced-motion: reduce)', $stylesheet);
-        $this->assertStringContainsString('.layout-flash--success', $stylesheet);
+        $this->assertStringContainsString('.toast-item--success', $stylesheet);
+        $this->assertStringNotContainsString('.layout-flash', $stylesheet, 'Flash messages are shown once, as toasts.');
+
+        foreach (['main', 'admin'] as $layout) {
+            $this->assertStringNotContainsString('layout-flash', $this->view("layouts/{$layout}.blade.php"));
+        }
         $this->assertStringContainsString('.admin-page-header__icon', $stylesheet);
     }
 
@@ -121,7 +159,8 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringNotContainsString('Usenet workspace', $this->view('layouts/main.blade.php'));
 
         $settingsForm = $this->view('admin/settings/show.blade.php');
-        $this->assertStringContainsString('<x-admin.card>', $settingsForm);
+        $this->assertStringContainsString('@foreach ($sections as $sectionTitle => $sectionFields)', $settingsForm);
+        $this->assertStringContainsString('admin-card surface-panel', $settingsForm);
         $this->assertStringContainsString('settings-page__domain-nav surface-panel-alt', $settingsForm);
         $this->assertStringContainsString('settings-page__action-bar surface-panel-alt', $settingsForm);
         $this->assertStringContainsString('aria-current="page"', $settingsForm);
@@ -131,6 +170,38 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringContainsString('name="remove_site_logo"', $settingsForm);
     }
 
+    public function test_site_logo_falls_back_to_the_nntmux_brand_mark(): void
+    {
+        $siteLogo = $this->view('components/site-logo.blade.php');
+
+        $this->assertStringContainsString('<x-application-logo', $siteLogo);
+        $this->assertStringNotContainsString('fallbackIcon', $siteLogo);
+        $this->assertStringNotContainsString('fallback-icon', $this->view('layouts/admin.blade.php'));
+        $this->assertStringContainsString('<svg', $this->view('components/application-logo.blade.php'));
+    }
+
+    public function test_layouts_link_default_brand_icons_that_exist(): void
+    {
+        foreach (['layouts/main', 'layouts/admin', 'layouts/guest', 'errors/layout'] as $layout) {
+            $this->assertStringContainsString("@include('partials.favicons')", $this->view("{$layout}.blade.php"), $layout);
+        }
+
+        $public = dirname(__DIR__, 2).'/public/';
+        preg_match_all("/asset\\('([^']+)'\\)/", $this->view('partials/favicons.blade.php'), $linked);
+        $this->assertNotEmpty($linked[1]);
+
+        foreach ($linked[1] as $file) {
+            $this->assertFileExists($public.$file);
+        }
+
+        $manifest = json_decode((string) file_get_contents($public.'site.webmanifest'), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertContains('maskable', array_column($manifest['icons'], 'purpose'));
+
+        foreach ($manifest['icons'] as $icon) {
+            $this->assertFileExists($public.ltrim($icon['src'], '/'));
+        }
+    }
+
     public function test_desktop_header_search_uses_separated_fully_rounded_controls(): void
     {
         $markup = $this->view('partials/header-menu.blade.php');
@@ -138,7 +209,8 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringContainsString('layout-primary-nav__search relative hidden items-center gap-2 2xl:flex', $markup);
         $this->assertStringContainsString('id="header-search-category" name="t" class="rounded-lg', $markup);
         $this->assertStringContainsString('class="w-40 rounded-lg border border-gray-600', $markup);
-        $this->assertStringContainsString('class="rounded-lg bg-primary-600', $markup);
+        // Solid scheme accent keeps white button text at WCAG AA on every color scheme.
+        $this->assertStringContainsString('class="rounded-lg bg-accent', $markup);
     }
 
     public function test_profile_and_edit_profile_share_the_full_content_width(): void
@@ -149,6 +221,16 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringContainsString('<div class="w-full">', $editProfile);
         $this->assertStringNotContainsString('max-w-4xl', $editProfile);
         $this->assertStringNotContainsString('max-w-4xl', $profile);
+    }
+
+    public function test_profile_api_tab_presents_usage_and_token_as_matching_cards(): void
+    {
+        $profile = $this->view('profile/index.blade.php');
+
+        $this->assertStringContainsString('</i>Downloads (24h)', $profile);
+        $this->assertStringContainsString('{{ $grabstoday ?? 0 }} / {{ $downloadLimit }}', $profile);
+        $this->assertStringContainsString('<div class="surface-panel rounded-lg p-4 shadow" x-data="copyToClipboard">', $profile);
+        $this->assertStringContainsString('class="min-h-11 w-full min-w-0 rounded-control border border-line bg-surface-sunken', $profile);
     }
 
     public function test_first_party_layouts_apply_the_shared_view_treatment(): void
@@ -164,10 +246,10 @@ class LayoutShellMarkupTest extends TestCase
         $this->assertStringContainsString('workspace-hero__glow', $this->view('components/page-header.blade.php'));
         $this->assertStringContainsString('aria-label="Breadcrumb"', $this->view('components/page-header.blade.php'));
         $this->assertStringContainsString('workspace-page-header', $this->view('components/admin/page-header.blade.php'));
-        $this->assertStringContainsString('rounded-2xl', $this->view('components/panel.blade.php'));
+        $this->assertStringContainsString('rounded-card', $this->view('components/panel.blade.php'));
         $this->assertStringContainsString('empty-state__icon', $this->view('components/empty-state.blade.php'));
         $this->assertStringContainsString('min-h-11', $this->view('components/input.blade.php'));
-        $this->assertStringContainsString('rounded-xl', $this->view('components/select.blade.php'));
+        $this->assertStringContainsString('rounded-control', $this->view('components/select.blade.php'));
         $this->assertStringContainsString('catalog-results-toolbar', $this->view('components/cover-results-toolbar.blade.php'));
         $this->assertStringContainsString('catalog-release-row', $this->view('components/cover-release-list.blade.php'));
         $this->assertStringContainsString('aria-label="Result view options"', $this->view('components/view-toggle.blade.php'));
@@ -196,7 +278,7 @@ class LayoutShellMarkupTest extends TestCase
         $stylesheet = $this->resource('css/app.css');
 
         $this->assertStringContainsString('.app-view-stack > .surface-panel', $stylesheet);
-        $this->assertStringContainsString('.workspace-page-header::after', $stylesheet);
+        $this->assertStringContainsString('.admin-page-header__icon', $stylesheet, 'The admin page header is a flat title row with an icon tile.');
         $this->assertStringContainsString('.workspace-hero__glow', $stylesheet);
         $this->assertStringContainsString('.workspace-hero__action', $stylesheet);
         $this->assertStringContainsString('.inline-search-widget', $stylesheet);
@@ -272,7 +354,7 @@ class LayoutShellMarkupTest extends TestCase
             }
 
             $relativePath = str_replace(__DIR__.'/../../resources/views/', '', $userView->getPathname());
-            $usesCanonicalHero = str_contains($markup, '<x-page-header') || str_contains($markup, 'movies-hero');
+            $usesCanonicalHero = str_contains($markup, '<x-page-header');
 
             $this->assertTrue($usesCanonicalHero, "{$relativePath} must use the canonical user hero.");
         }
@@ -301,7 +383,7 @@ class LayoutShellMarkupTest extends TestCase
             'books/index.blade.php' => 'title="Books"',
             'console/index.blade.php' => 'title="Console"',
             'games/index.blade.php' => 'title="Games"',
-            'movies/index.blade.php' => '>Movies</h1>',
+            'movies/index.blade.php' => 'title="Movies"',
             'music/index.blade.php' => 'title="Music"',
             'xxx/index.blade.php' => 'title="Adult"',
         ] as $view => $categoryTitle) {

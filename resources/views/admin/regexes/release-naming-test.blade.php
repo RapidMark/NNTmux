@@ -2,18 +2,18 @@
 
 @section('content')
 <div class="space-y-6">
+    <x-admin.page-header :title="$title ?? 'Release Naming Regex Test'" icon="fas fa-flask">
+        <x-slot:actions>
+            <x-admin.button :href="url('/admin/release_naming_regexes-list')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
+        </x-slot:actions>
+    </x-admin.page-header>
     <x-admin.card>
-        <x-admin.page-header :title="$title ?? 'Release Naming Regex Test'" icon="fas fa-flask">
-            <x-slot:actions>
-                <x-admin.button :href="url('/admin/release_naming_regexes-list')" tone="gray" icon="fas fa-arrow-left">Back to List</x-admin.button>
-            </x-slot:actions>
-        </x-admin.page-header>
 
         <!-- Info Alert -->
-        <div class="px-6 py-4 bg-blue-50 border-b border-blue-100">
+        <div class="px-6 py-4 bg-info-50 dark:bg-info-950/40 border-b border-info-100">
             <div class="flex">
-                <i class="fas fa-info-circle text-blue-500 text-xl mr-3"></i>
-                <p class="text-sm text-blue-700">
+                <i aria-hidden="true" class="fas fa-info-circle text-info-500 text-xl mr-3"></i>
+                <p class="text-sm text-info-700 dark:text-info-300">
                     Test your release naming regex patterns against actual release data from your database.
                 </p>
             </div>
@@ -25,12 +25,12 @@
                 <!-- Group Field -->
                 <div class="md:col-span-1">
                     <label for="group" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Group: <span class="text-red-500">*</span>
+                        Group: <span class="text-danger-500">*</span>
                     </label>
                     <input type="text"
                            id="group"
                            name="group"
-                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                            value="{{ $group }}"
                            placeholder="alt.binaries.teevee"
                            required>
@@ -47,7 +47,7 @@
                     <input type="number"
                            id="showlimit"
                            name="showlimit"
-                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                            value="{{ $showlimit }}"
                            min="1"
                            max="1000">
@@ -64,7 +64,7 @@
                     <input type="number"
                            id="querylimit"
                            name="querylimit"
-                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                           class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                            value="{{ $querylimit }}"
                            min="1"
                            max="500000">
@@ -77,11 +77,11 @@
             <!-- Regex Field -->
             <div class="mb-6">
                 <label for="regex" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Regex: <span class="text-red-500">*</span>
+                    Regex: <span class="text-danger-500">*</span>
                 </label>
                 <textarea id="regex"
                           name="regex"
-                          class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                          class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
                           rows="4"
                           required
                           placeholder="/^(?P<name>.*?)([\. ]S\d{1,3}[\. ]?E\d{1,3})/i">{{ regex_display_value($regex) }}</textarea>
@@ -91,8 +91,8 @@
             </div>
 
             <!-- Submit Button -->
-            <button type="submit" class="px-6 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700">
-                <i class="fas fa-play mr-2"></i>Test Regex
+            <button type="submit" class="px-6 py-2 bg-accent dark:bg-accent-hover text-white rounded-lg hover:bg-accent-hover">
+                <i aria-hidden="true" class="fas fa-play mr-2"></i>Test Regex
             </button>
         </form>
 
@@ -100,7 +100,7 @@
         @if($data)
             <div class="px-6 py-6 border-t border-gray-200">
                 <h2 class="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                    <i class="fas fa-chart-bar mr-2"></i>Test Results:
+                    <i aria-hidden="true" class="fas fa-chart-bar mr-2"></i>Test Results:
                 </h2>
 
                 @if(count($data) > 0)
@@ -108,16 +108,16 @@
                         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Release ID</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Original Name</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">New Name</th>
-                                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-28">Match</th>
+                                    <x-admin.th width="24">Release ID</x-admin.th>
+                                    <x-admin.th>Original Name</x-admin.th>
+                                    <x-admin.th>New Name</x-admin.th>
+                                    <x-admin.th align="center" width="28">Match</x-admin.th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                 @foreach($data as $row)
                                     <tr class="hover:bg-gray-50">
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 dark:text-gray-100">
                                             {{ $row['releaseID'] ?? $row['id'] ?? 'N/A' }}
                                         </td>
                                         <td class="px-6 py-4 text-sm text-gray-500">
@@ -127,22 +127,18 @@
                                         </td>
                                         <td class="px-6 py-4 text-sm">
                                             @if(isset($row['newName']) && $row['newName'])
-                                                <div class="max-w-xl wrap-break-word font-semibold text-green-600">
+                                                <div class="max-w-xl wrap-break-word font-semibold text-success-600">
                                                     {{ $row['newName'] }}
                                                 </div>
                                             @else
-                                                <span class="text-gray-400">—</span>
+                                                <span class="text-gray-500 dark:text-gray-400">—</span>
                                             @endif
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-center">
                                             @if(isset($row['match']) && $row['match'])
-                                                <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                                                    <i class="fas fa-check mr-1"></i>Match
-                                                </span>
+                                                <x-admin.badge tone="success" icon="fas fa-check">Match</x-admin.badge>
                                             @else
-                                                <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
-                                                    <i class="fas fa-times mr-1"></i>No Match
-                                                </span>
+                                                <x-admin.badge tone="danger" icon="fas fa-times">No Match</x-admin.badge>
                                             @endif
                                         </td>
                                     </tr>
@@ -152,14 +148,14 @@
                     </div>
 
                     <!-- Success Summary -->
-                    <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <div class="mt-6 p-4 bg-success-50 dark:bg-success-950/40 border border-success-200 rounded-lg">
                         <div class="flex">
-                            <i class="fas fa-check-circle text-green-500 text-xl mr-3"></i>
+                            <i aria-hidden="true" class="fas fa-check-circle text-success-500 text-xl mr-3"></i>
                             <div>
-                                <p class="text-green-800 font-medium">
+                                <p class="text-success-800 dark:text-success-200 font-medium">
                                     Tested {{ count($data) }} releases
                                 </p>
-                                <p class="text-sm text-green-700 mt-1">
+                                <p class="text-sm text-success-700 dark:text-success-300 mt-1">
                                     Review the matches above to verify your regex pattern is working correctly.
                                 </p>
                             </div>
@@ -167,12 +163,12 @@
                     </div>
                 @else
                     <!-- No Results Warning -->
-                    <div class="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div class="p-4 bg-warning-50 dark:bg-warning-950/40 border border-warning-200 rounded-lg">
                         <div class="flex">
-                            <i class="fas fa-exclamation-triangle text-yellow-500 text-xl mr-3"></i>
+                            <i aria-hidden="true" class="fas fa-exclamation-triangle text-warning-500 text-xl mr-3"></i>
                             <div>
-                                <p class="text-yellow-800 font-medium">No releases found</p>
-                                <p class="text-sm text-yellow-700 mt-1">
+                                <p class="text-warning-800 dark:text-warning-200 font-medium">No releases found</p>
+                                <p class="text-sm text-warning-700 dark:text-warning-300 mt-1">
                                     No releases found for the specified group or no matches found. Try a different group or regex pattern.
                                 </p>
                             </div>
