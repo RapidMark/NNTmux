@@ -20,6 +20,7 @@ use App\Services\Configuration\ProcessingRuntimeStateRepository;
 use App\Services\NNTP\NNTPService;
 use App\Services\Nzb\NzbCreationCandidateQuery;
 use App\Services\Nzb\NzbService;
+use App\Services\Releases\LateCollectionMerger;
 use App\Services\Releases\ReleaseBrowseService;
 use App\Services\Releases\ReleaseDuplicateFinder;
 use App\Services\Releases\ReleaseManagementService;
@@ -233,6 +234,7 @@ final class ReleaseProcessingService
         $this->outputHeader('Phase 1: Collection Processing');
         $this->processIncompleteCollections($normalizedGroupId);
         $this->processCollectionSizes($normalizedGroupId);
+        $this->mergeLateCollections($normalizedGroupId);
         $this->deleteUnwantedCollections($normalizedGroupId);
 
         // Phase 2: Release creation loop
@@ -665,6 +667,38 @@ final class ReleaseProcessingService
     }
 
     /**
+     * Merge sized collections of already released posts into those releases' NZBs.
+     */
+    public function mergeLateCollections(int|string|null $groupID): void
+    {
+        $merger = app(LateCollectionMerger::class);
+        if (! $merger->enabled()) {
+            return;
+        }
+
+        $startTime = now()->toImmutable();
+        $this->outputSubHeader('Merging Late Collections Into Releases');
+        $totals = $merger->mergeSized($this->normalizeGroupId($groupID));
+        $this->outputInfo(sprintf(
+            '%s late collections merged (%s segments) in %s',
+            number_format($totals['merged']),
+            number_format($totals['segments']),
+            now()->diffForHumans($startTime, true)
+        ));
+    }
+
+    /**
+     * Size and file-count filters must not drop a few late parts of a released post.
+     */
+    private function keepLateCollections(object $query, string $alias): void
+    {
+        $merger = app(LateCollectionMerger::class);
+        if ($merger->enabled()) {
+            $query->whereRaw('NOT '.str_replace('c.collectionhash', $alias.'.collectionhash', $merger->releasedPostCondition()));
+        }
+    }
+
+    /**
      * Delete collections that don't meet size/file count requirements.
      *
      * @throws Throwable
@@ -691,6 +725,7 @@ final class ReleaseProcessingService
         if ($normalizedGroupId !== null) {
             $par2OnlyCollectionIds->where('c.groups_id', $normalizedGroupId);
         }
+        $this->keepLateCollections($par2OnlyCollectionIds, 'c');
         $stats['par2Only'] += $this->deleteCollectionQueryInBatches($par2OnlyCollectionIds, 'Par2-only cleanup');
 
         // Sized collections with no bytes are never released and every size
@@ -719,6 +754,7 @@ final class ReleaseProcessingService
                     ->where('groups_id', (int) $grpID['id'])
                     ->where('filesize', '>', 0)
                     ->where('filesize', '<', $effectiveMinSize);
+                $this->keepLateCollections($ids, 'collections');
                 $stats['minSize'] += $this->deleteCollectionQueryInBatches($ids, 'Min-size cleanup');
             }
 
@@ -737,6 +773,7 @@ final class ReleaseProcessingService
                     ->where('groups_id', (int) $grpID['id'])
                     ->where('filesize', '>', 0)
                     ->where('totalfiles', '<', $effectiveMinFiles);
+                $this->keepLateCollections($ids, 'collections');
                 $stats['minFiles'] += $this->deleteCollectionQueryInBatches($ids, 'Min-files cleanup');
             }
         }

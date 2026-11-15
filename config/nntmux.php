@@ -27,6 +27,9 @@ return [
     // Header workers queue touched binaries in Redis and one scheduled aggregator
     // recounts them, instead of every worker recounting shared rows (deadlocks).
     'defer_header_aggregates' => (bool) env('NN_DEFER_HEADER_AGGREGATES', false),
+    // Late headers of an already released post are added to that release's NZB
+    // instead of forming a second, partial release.
+    'merge_late_collections' => (bool) env('NN_MERGE_LATE_COLLECTIONS', false),
     // Files of an obfuscated multi-file release whose first segment is checked for an archive.
     'archive_probe_files' => (int) env('NN_ARCHIVE_PROBE_FILES', 3),
     // Season packs packed one archive set per episode: sets (first volume of each) listed per release; 1 = only the first set.

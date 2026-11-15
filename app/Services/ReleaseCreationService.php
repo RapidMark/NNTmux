@@ -20,6 +20,7 @@ use App\Services\NameFixing\QuotedFilenameCleanerService;
 use App\Services\NameFixing\ReversedNameDetectorService;
 use App\Services\NameFixing\SpamPrefixedFilenameCleanerService;
 use App\Services\Nzb\NzbService;
+use App\Services\Releases\LateCollectionMerger;
 use App\Services\Releases\ReleaseDuplicateFinder;
 use App\Support\SqlError;
 use App\Support\Utf8;
@@ -263,6 +264,7 @@ class ReleaseCreationService
                 $releaseID = $this->insertReleaseClaimingCollection($releaseData, (int) $collection->id);
 
                 if ($releaseID !== null) {
+                    app(LateCollectionMerger::class)->remember($releaseID, (string) $collection->collectionhash);
                     ReleaseRegex::insertOrIgnore([
                         'releases_id' => $releaseID,
                         'collection_regex_id' => $collection->collection_regexes_id,
