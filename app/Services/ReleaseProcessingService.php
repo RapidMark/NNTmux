@@ -454,6 +454,18 @@ final class ReleaseProcessingService
      * authority for binary counts/sizes; binary aggregates are then the
      * authority for collection readiness and filesize.
      */
+    /**
+     * Collections created before this are cut to the files present and released.
+     * While the startup reset of the delays runs, their timestamps still predate the
+     * downtime, so nothing is cut; complete collections are released as usual.
+     */
+    private function staleCutoff(): Carbon
+    {
+        return CollectionDelayReset::running()
+            ? now()->subYears(100)
+            : now()->subHours($this->settings->collectionDelayTime);
+    }
+
     private function reconcileIncompleteCollections(?int $groupId): void
     {
         $statuses = [
@@ -475,6 +487,9 @@ final class ReleaseProcessingService
             $statuses,
         );
 
+        // Rows past the delay are reconciled even while the startup reset runs:
+        // complete ones are released then, only the cut to the files present waits
+        // (staleCutoff() in the update below).
         $cutoff = now()->subHours($this->settings->collectionDelayTime);
         $staleStatuses = array_values(array_diff($statuses, [CollectionFileCheckStatus::CompleteParts->value]));
         // Cap the keyset at the newest stale id. Without it the last page scans
@@ -584,9 +599,9 @@ final class ReleaseProcessingService
                  WHERE c.id IN ({$idPlaceholders}) AND c.filecheck IN ({$statusPlaceholders})",
                 [
                     ...$collectionIds,
-                    now()->subHours($this->settings->collectionDelayTime),
+                    $this->staleCutoff(),
                     CollectionFileCheckStatus::CompleteParts->value,
-                    now()->subHours($this->settings->collectionDelayTime),
+                    $this->staleCutoff(),
                     CollectionFileCheckStatus::CompleteParts->value,
                     ...$collectionIds,
                     ...$statuses,
@@ -651,7 +666,7 @@ final class ReleaseProcessingService
                 );
                 $createdAt = $collection->dateadded ?? $collection->added;
                 $stale = $createdAt !== null
-                    && strtotime((string) $createdAt) < now()->subHours($this->settings->collectionDelayTime)->timestamp
+                    && strtotime((string) $createdAt) < $this->staleCutoff()->timestamp
                     && \in_array((int) $collection->filecheck, CollectionFileCheckStatus::staleReconcilableValues(), true)
                     && ! $this->holdsNzbSplitCollection((string) ($collection->subject ?? ''), (int) $collection->totalfiles);
                 $totalFiles = $stale ? (int) $aggregate->currentfiles : (int) $collection->totalfiles;

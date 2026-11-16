@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Enums\TmuxPaneRole;
 use App\Services\CollectionCleanupService;
+use App\Services\CollectionDelayReset;
 use App\Services\Configuration\ConfigurationProvider;
 use App\Services\Configuration\ProcessingRuntimeStateRepository;
 use App\Services\Tmux\TmuxCommand;
@@ -162,20 +163,34 @@ class TmuxStart extends Command
     }
 
     /**
-     * Reset old collections
+     * Restart the delay of waiting collections in the background, so the workers
+     * start at once. Until it ends, release processing releases complete
+     * collections only (see CollectionDelayReset).
      */
     private function resetOldCollections(): void
     {
+        // Set before the workers start, so no release run sees the old delays.
+        CollectionDelayReset::begin();
+        $command = sprintf(
+            'nohup %s %s collections:restart-delay >> %s 2>&1 &',
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg(base_path('artisan')),
+            escapeshellarg(storage_path('logs/collection-delay-reset.log')),
+        );
+        exec($command, $output, $exitCode);
+        if ($exitCode === 0) {
+            $this->info('  ✓ Collection delay reset running in the background');
+
+            return;
+        }
+
         try {
             $count = app(CollectionCleanupService::class)->restartCollectionDelay();
-
-            if ($count > 0) {
-                $this->info("  ✓ Reset {$count} expired collections");
-            } else {
-                $this->info('  ✓ No collections needed resetting');
-            }
+            $this->info("  ✓ Reset {$count} expired collections");
         } catch (\Exception $e) {
             $this->warn('  ⚠ Failed to reset collections: '.$e->getMessage());
+        } finally {
+            CollectionDelayReset::end();
         }
     }
 
