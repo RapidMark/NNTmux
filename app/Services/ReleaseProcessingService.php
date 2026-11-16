@@ -66,6 +66,9 @@ final class ReleaseProcessingService
 
     private readonly ProcessReleasesSettings $settings;
 
+    /** @var list<int>|null Sized collections of already released posts, per cleanup run. */
+    private ?array $lateCollectionIds = null;
+
     private readonly NzbService $nzb;
 
     private readonly ReleaseCleaningService $releaseCleaning;
@@ -692,9 +695,14 @@ final class ReleaseProcessingService
      */
     private function keepLateCollections(object $query, string $alias): void
     {
-        $merger = app(LateCollectionMerger::class);
-        if ($merger->enabled()) {
-            $query->whereRaw('NOT '.str_replace('c.collectionhash', $alias.'.collectionhash', $merger->releasedPostCondition()));
+        // Read once per cleanup run (deleteUnwantedCollections resets it): the
+        // lookup goes through the small hash table, and a per-row NOT EXISTS over
+        // millions of sized collections stalled release processing.
+        $this->lateCollectionIds ??= app(LateCollectionMerger::class)->enabled()
+            ? app(LateCollectionMerger::class)->sizedLateCollectionIds()
+            : [];
+        if ($this->lateCollectionIds !== []) {
+            $query->whereNotIn($alias.'.id', $this->lateCollectionIds);
         }
     }
 
@@ -705,6 +713,7 @@ final class ReleaseProcessingService
      */
     public function deleteUnwantedCollections(int|string|null $groupID): void
     {
+        $this->lateCollectionIds = null;
         $startTime = now()->toImmutable();
         $this->outputSubHeader('Filtering Collections by Size/File Count');
 

@@ -61,11 +61,21 @@ final class LateCollectionMerger
     }
 
     /**
-     * SQL condition (on collection alias `c`) that is true for collections of an already released post.
+     * Sized collections that belong to an already released post, driven from the
+     * small hash table so the unique collectionhash index does the matching.
+     *
+     * @return list<int>
      */
-    public function releasedPostCondition(): string
+    public function sizedLateCollectionIds(): array
     {
-        return 'EXISTS (SELECT 1 FROM release_collection_hashes h WHERE h.collectionhash = c.collectionhash)';
+        return DB::table('release_collection_hashes as h')
+            ->join('collections as c', 'c.collectionhash', '=', 'h.collectionhash')
+            ->where('c.filecheck', CollectionFileCheckStatus::Sized->value)
+            ->whereNull('c.releases_id')
+            ->limit(10000)
+            ->pluck('c.id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
     }
 
     /**
@@ -80,8 +90,9 @@ final class LateCollectionMerger
             return $totals;
         }
 
-        $query = DB::table('collections as c')
-            ->join('release_collection_hashes as h', 'h.collectionhash', '=', 'c.collectionhash')
+        // Driven from the small hash table; the unique collectionhash index finds the collection.
+        $query = DB::table('release_collection_hashes as h')
+            ->join('collections as c', 'c.collectionhash', '=', 'h.collectionhash')
             ->join('releases as r', 'r.id', '=', 'h.releases_id')
             ->join('usenet_groups as g', 'g.id', '=', 'c.groups_id')
             ->where('c.filecheck', CollectionFileCheckStatus::Sized->value)
