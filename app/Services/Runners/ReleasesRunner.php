@@ -56,6 +56,11 @@ class ReleasesRunner extends BaseRunner
         // Run bounded batches through the shared worker pool
         $batches = array_chunk($uGroups, max(1, $maxProcesses));
 
+        // A batch that fails (a worker hit its timeout) must not cost the later
+        // batches their turn: groups further down the list would otherwise never
+        // run while one early group keeps timing out, and their releases would
+        // never get the NZB retry. The failure is still reported at the end.
+        $failure = null;
         foreach ($batches as $batchIndex => $batch) {
             $tasks = [];
             foreach ($batch as $group) {
@@ -73,8 +78,12 @@ class ReleasesRunner extends BaseRunner
             } catch (\Throwable $e) {
                 Log::error('Release processing batch failed: '.$e->getMessage());
                 cli()->error('Batch '.($batchIndex + 1).' failed: '.$e->getMessage());
-                throw new RuntimeException('Worker batch failed.', 0, $e);
+                $failure ??= $e;
             }
+        }
+
+        if ($failure !== null) {
+            throw new RuntimeException('Worker batch failed.', 0, $failure);
         }
     }
 
