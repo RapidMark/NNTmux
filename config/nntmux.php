@@ -27,6 +27,15 @@ return [
     // Header workers queue touched binaries in Redis and one scheduled aggregator
     // recounts them, instead of every worker recounting shared rows (deadlocks).
     'defer_header_aggregates' => (bool) env('NN_DEFER_HEADER_AGGREGATES', false),
+    // NZBs built by queue workers (the nzb-build queue) instead of inside the
+    // release run: release runs only form releases, nzb:dispatch keeps the queue
+    // topped up, and a group stops forming releases while nzb_queue_backlog of
+    // its releases wait for an NZB (0 = no limit).
+    'nzb_queue' => (bool) env('NN_NZB_QUEUE', false),
+    'nzb_queue_workers' => (int) env('NN_NZB_QUEUE_WORKERS', 3),
+    'nzb_queue_batch' => (int) env('NN_NZB_QUEUE_BATCH', 25),
+    'nzb_queue_job_seconds' => (int) env('NN_NZB_QUEUE_JOB_SECONDS', 120),
+    'nzb_queue_backlog' => (int) env('NN_NZB_QUEUE_BACKLOG', 2000),
     // Late headers of an already released post are added to that release's NZB
     // instead of forming a second, partial release.
     'merge_late_collections' => (bool) env('NN_MERGE_LATE_COLLECTIONS', false),

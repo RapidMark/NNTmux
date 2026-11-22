@@ -40,6 +40,8 @@ Schedule::command('gdpr:purge-expired-exports')->dailyAt('03:30')->withoutOverla
 Schedule::command('nntmux:collect-stats')->everyFifteenMinutes()->withoutOverlapping();
 // Also while ids are still queued, so switching the deferral off drains the backlog.
 Schedule::command('binaries:flush-aggregates')->everyMinute()->withoutOverlapping()->when(static fn (): bool => (bool) config('nntmux.defer_header_aggregates') || app(\App\Services\Binaries\DeferredAggregateQueue::class)->size() > 0);
+// NZBs are built by queue workers when NN_NZB_QUEUE is on.
+Schedule::command('nzb:dispatch')->everyMinute()->withoutOverlapping()->when(static fn (): bool => (bool) config('nntmux.nzb_queue'));
 Schedule::command('nntmux:populate-steam-apps')->monthly();
 // Collect system metrics every 5 minutes
 Schedule::command('metrics:collect')->everyFiveMinutes()->withoutOverlapping();

@@ -222,6 +222,19 @@ return [
             'timeout' => 120,
             'nice' => 0,
         ],
+        // NN_NZB_QUEUE: a fixed set of workers that only build NZBs.
+        'supervisor-nzb' => [
+            'connection' => 'redis',
+            'queue' => ['nzb-build'],
+            'balance' => false,
+            'maxProcesses' => max(1, (int) env('NN_NZB_QUEUE_WORKERS', 3)),
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 512,
+            'tries' => 1,
+            'timeout' => (int) env('NN_NZB_QUEUE_JOB_SECONDS', 120) + 30,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [

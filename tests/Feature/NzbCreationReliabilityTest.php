@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Jobs\BuildNzbsJob;
 use App\Models\Release;
 use App\Services\Binaries\BinariesConfig;
 use App\Services\CollectionCleanupService;
@@ -16,6 +17,7 @@ use App\Support\Data\NzbCreationResult;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use PDO;
 use Psr\Log\AbstractLogger;
 use Tests\TestCase;
@@ -304,6 +306,101 @@ class NzbCreationReliabilityTest extends TestCase
         $this->assertFileExists($finalNzb);
     }
 
+    public function test_nzb_creation_stops_at_the_limit_and_leaves_the_rest_unclaimed(): void
+    {
+        foreach (range(1, 3) as $id) {
+            $this->insertRelease($id, 'abc'[$id - 1], postdate: "2026-07-13 0{$id}:00:00");
+        }
+        $nzb = new CountingNzbService;
+
+        $this->assertSame(2, $this->serviceWith($nzb)->createNZBs(null, 2));
+
+        $this->assertSame([3, 2], $nzb->built);
+        $this->assertSame(0, DB::table('releases')->whereNotNull('nzb_creation_claim_token')->count());
+    }
+
+    public function test_nzb_creation_past_its_deadline_hands_the_claims_back(): void
+    {
+        $this->insertRelease(1, 'a');
+        $this->insertRelease(2, 'b');
+        $nzb = new CountingNzbService;
+
+        $this->assertSame(0, $this->serviceWith($nzb)->createNZBs(null, 10, microtime(true) - 1));
+
+        $this->assertSame([], $nzb->built);
+        $this->assertSame(0, DB::table('releases')->whereNotNull('nzb_creation_claim_token')->count());
+        $this->assertSame(2, NzbCreationCandidateQuery::baseBuilder(null)->count());
+    }
+
+    public function test_build_nzbs_job_builds_one_batch(): void
+    {
+        foreach (range(1, 3) as $id) {
+            $this->insertRelease($id, 'abc'[$id - 1]);
+        }
+        config(['nntmux.nzb_queue_batch' => 2]);
+        $nzb = new CountingNzbService;
+
+        (new BuildNzbsJob)->handle($this->serviceWith($nzb));
+
+        $this->assertCount(2, $nzb->built);
+        $this->assertSame(BuildNzbsJob::QUEUE, (new BuildNzbsJob)->queue);
+    }
+
+    public function test_release_creation_pauses_while_the_nzb_backlog_is_full(): void
+    {
+        $this->insertRelease(1, 'a');
+        $this->insertRelease(2, 'b');
+        $backlogFull = new \ReflectionMethod(ReleaseProcessingService::class, 'nzbBacklogFull');
+        $service = $this->serviceWith(new CountingNzbService);
+
+        config(['nntmux.nzb_queue_backlog' => 2]);
+        $this->assertSame(2, $backlogFull->invoke($service, 1));
+        $this->assertNull($backlogFull->invoke($service, 2));
+
+        config(['nntmux.nzb_queue_backlog' => 3]);
+        $this->assertNull($backlogFull->invoke($service, 1));
+
+        config(['nntmux.nzb_queue_backlog' => 0]);
+        $this->assertNull($backlogFull->invoke($service, 1));
+    }
+
+    public function test_nzb_dispatch_tops_the_queue_up_to_two_jobs_per_worker(): void
+    {
+        Queue::fake();
+        foreach (range(1, 5) as $id) {
+            $this->insertRelease($id, 'abcde'[$id - 1]);
+        }
+        config(['nntmux.nzb_queue_workers' => 2, 'nntmux.nzb_queue_batch' => 2]);
+
+        $this->artisan('nzb:dispatch')->assertSuccessful();
+        Queue::assertPushedOn(BuildNzbsJob::QUEUE, BuildNzbsJob::class);
+        Queue::assertPushed(BuildNzbsJob::class, 3);
+
+        $this->artisan('nzb:dispatch')->assertSuccessful();
+        Queue::assertPushed(BuildNzbsJob::class, 4);
+
+        $this->artisan('nzb:dispatch')->assertSuccessful();
+        Queue::assertPushed(BuildNzbsJob::class, 4);
+    }
+
+    public function test_nzb_dispatch_queues_nothing_without_waiting_releases(): void
+    {
+        Queue::fake();
+
+        $this->artisan('nzb:dispatch')->assertSuccessful();
+
+        Queue::assertNothingPushed();
+    }
+
+    private function serviceWith(NzbService $nzb): ReleaseProcessingService
+    {
+        return (new ReleaseProcessingService(
+            nzb: $nzb,
+            releaseManagement: new DatabaseOnlyReleaseManagementService,
+            collectionCleanupService: app(CollectionCleanupService::class),
+        ))->setEchoCLI(false);
+    }
+
     private function releaseProcessingService(NzbCreationResult $result): ReleaseProcessingService
     {
         return (new ReleaseProcessingService(
@@ -477,6 +574,24 @@ class NzbCreationReliabilityTest extends TestCase
         putenv($key.'='.$value);
         $_ENV[$key] = $value;
         $_SERVER[$key] = $value;
+    }
+}
+
+class CountingNzbService extends NzbService
+{
+    /** @var list<int> */
+    public array $built = [];
+
+    public function __construct()
+    {
+        parent::__construct(app(CollectionCleanupService::class));
+    }
+
+    public function createNzbForRelease(Release $release): NzbCreationResult
+    {
+        $this->built[] = (int) $release->id;
+
+        return NzbCreationResult::success('/dev/null', []);
     }
 }
 

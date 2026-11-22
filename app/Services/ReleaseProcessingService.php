@@ -274,15 +274,24 @@ final class ReleaseProcessingService
     ): array {
         $totals = ['releases' => 0, 'nzbs' => 0, 'dupes' => 0, 'iterations' => 0];
         $limit = $this->settings->releaseCreationLimit;
+        // With the NZB queue on, queue workers build the NZBs (nzb:dispatch);
+        // this loop only forms releases, and stops while the group's NZBs lag.
+        $nzbQueue = (bool) config('nntmux.nzb_queue');
 
         do {
             $totals['iterations']++;
+
+            if ($nzbQueue && ($waiting = $this->nzbBacklogFull($normalizedGroupId)) !== null) {
+                $this->outputStat('Release creation paused, releases waiting for an NZB', $waiting);
+
+                break;
+            }
 
             $result = $this->createReleases($normalizedGroupId);
             $totals['releases'] += $result->added;
             $totals['dupes'] += $result->dupes;
 
-            $nzbFilesAdded = $this->createNZBs($normalizedGroupId);
+            $nzbFilesAdded = $nzbQueue ? 0 : $this->createNZBs($normalizedGroupId);
             $totals['nzbs'] += $nzbFilesAdded;
 
             $this->categorizeReleases($categorize, $normalizedGroupId);
@@ -293,6 +302,24 @@ final class ReleaseProcessingService
         } while ($shouldContinue);
 
         return $totals;
+    }
+
+    /**
+     * The number of the group's releases waiting for an NZB when it has reached
+     * nntmux.nzb_queue_backlog, else null (also when the limit is 0, which is off).
+     */
+    private function nzbBacklogFull(?int $groupId): ?int
+    {
+        $max = (int) config('nntmux.nzb_queue_backlog', 2000);
+        if ($max <= 0) {
+            return null;
+        }
+        // Counted up to the limit only: the full count is not needed.
+        $waiting = DB::query()
+            ->fromSub(NzbCreationCandidateQuery::baseBuilder($groupId, includeClaimed: true)->select('r.id')->limit($max)->toBase(), 'waiting')
+            ->count();
+
+        return $waiting >= $max ? $waiting : null;
     }
 
     /**
@@ -811,7 +838,13 @@ final class ReleaseProcessingService
      *
      * @throws Throwable
      */
-    public function createNZBs(int|string|null $groupID): int
+    /**
+     * Build the NZBs of releases that have none, claiming up to $limit of them
+     * (default: the release creation limit). With a $deadline (a microtime(true)
+     * value) no NZB is started after it; the releases left are handed back
+     * unclaimed for the next run.
+     */
+    public function createNZBs(int|string|null $groupID, ?int $limit = null, ?float $deadline = null): int
     {
         $startTime = now()->toImmutable();
         $this->outputSubHeader('Creating NZB Files');
@@ -820,7 +853,7 @@ final class ReleaseProcessingService
         $retryCount = 0;
         $deletedCount = 0;
         $claimToken = bin2hex(random_bytes(16));
-        $limit = max(1, $this->settings->releaseCreationLimit);
+        $limit = max(1, $limit ?? $this->settings->releaseCreationLimit);
         $total = min(NzbCreationCandidateQuery::baseBuilder($groupID)->count(), $limit);
 
         if ($total > 0) {
@@ -838,6 +871,11 @@ final class ReleaseProcessingService
             $processed = 0;
             $releases = NzbCreationCandidateQuery::claimBatch($groupID, $limit, $claimToken, $columns);
             foreach ($releases as $release) {
+                if ($deadline !== null && microtime(true) >= $deadline) {
+                    NzbCreationCandidateQuery::clearClaim((int) $release->id, $claimToken);
+
+                    continue;
+                }
                 try {
                     $result = $this->nzb->createNzbForRelease($release);
                     if ($result->success) {
