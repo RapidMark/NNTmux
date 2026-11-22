@@ -17,7 +17,7 @@ COPY package*.json /app/
 RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund
 COPY . /app
 RUN composer dump-autoload --no-dev --no-scripts --optimize \
-    && mkdir -p bootstrap/cache storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs \
+    && mkdir -p bootstrap/cache storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs resources/js/types \
     && touch /tmp/build.sqlite \
     && APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=/tmp/build.sqlite CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array php artisan package:discover --ansi \
     && APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=/tmp/build.sqlite CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array npm run build \
