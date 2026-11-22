@@ -421,8 +421,14 @@ class Tmux
     }
 
     /**
-     * Count the active ingestion tables directly; InnoDB row estimates can stay
-     * stale and legacy multigroup tables are no longer used by ingestion.
+     * Tables at or above this many rows (by InnoDB's estimate) report the
+     * estimate instead of an exact COUNT(*).
+     */
+    public const int EXACT_COUNT_BELOW = 1_000_000;
+
+    /**
+     * Count the active ingestion tables; legacy multigroup tables are no longer
+     * used by ingestion.
      *
      * @return list<object{name: string, row_count: int}>
      */
@@ -431,9 +437,29 @@ class Tmux
         $counts = [];
 
         foreach (['binaries', 'parts', 'missed_parts'] as $table) {
-            $counts[] = (object) ['name' => $table, 'row_count' => DB::table($table)->count()];
+            $counts[] = (object) ['name' => $table, 'row_count' => self::tableRowCount($table)];
         }
 
         return $counts;
+    }
+
+    /**
+     * Rows in a table, exact while that is cheap. An exact COUNT(*) on a table
+     * of billions of parts takes many minutes and holds up the monitor loop,
+     * which then relaunches no pane; InnoDB's estimate can drift, so small
+     * tables, where an emptied table must read 0, are still counted exactly.
+     */
+    public static function tableRowCount(string $table): int
+    {
+        if (! in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)) {
+            return DB::table($table)->count();
+        }
+
+        $estimate = (int) (DB::selectOne(
+            'SELECT TABLE_ROWS AS row_count FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$table]
+        )->row_count ?? 0);
+
+        return $estimate < self::EXACT_COUNT_BELOW ? DB::table($table)->count() : $estimate;
     }
 }
