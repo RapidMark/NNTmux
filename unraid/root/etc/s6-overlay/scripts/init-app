@@ -12,7 +12,20 @@ wait_for() {
     echo "${name} did not become ready" >&2
     exit 1
 }
-wait_for mariadb mariadb-admin --protocol=socket --socket=/run/mysqld/mysqld.sock ping
+# After an unclean stop MariaDB replays its redo log before it accepts
+# connections, which takes minutes on a large database: wait while it runs.
+wait_for_mariadb() {
+    local idle=0
+    until mariadb-admin --protocol=socket --socket=/run/mysqld/mysqld.sock ping >/dev/null 2>&1; do
+        if pgrep -x mariadbd >/dev/null; then idle=0; else idle=$((idle + 1)); fi
+        if [ "$idle" -ge 120 ]; then
+            echo "mariadb did not become ready" >&2
+            exit 1
+        fi
+        sleep 1
+    done
+}
+wait_for_mariadb
 wait_for redis redis-cli -h 127.0.0.1 ping
 wait_for manticore curl -fs http://127.0.0.1:9308/
 

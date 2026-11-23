@@ -33,7 +33,8 @@ Edit `.env` for API keys or anything the template does not expose, then restart.
 ## Unraid
 
 Install from Community Apps, or add a container with template URL `https://raw.githubusercontent.com/RapidMark/unraid-templates/main/templates/nntmux.xml`.
-The template passes `--stop-timeout 120` so MariaDB gets a clean shutdown.
+MariaDB stops in seconds: it writes its redo log and replays it on the next start, while startup waits for it.
+Unraid stops containers with its own Docker timeout (10 s by default), not the template's `--stop-timeout`.
 
 ## Building
 
