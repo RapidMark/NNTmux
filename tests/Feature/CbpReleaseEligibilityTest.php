@@ -8,6 +8,7 @@ use App\Enums\CollectionFileCheckStatus;
 use App\Services\Binaries\BinariesConfig;
 use App\Services\Binaries\CollectionHandler;
 use App\Services\Binaries\HeaderStorageService;
+use App\Services\CollectionDelayReset;
 use App\Services\CollectionsCleaningService;
 use App\Services\ReleaseProcessingService;
 use Illuminate\Database\Schema\Blueprint;
@@ -217,6 +218,52 @@ class CbpReleaseEligibilityTest extends TestCase
 
         $this->assertStatus($id, CollectionFileCheckStatus::Sized);
         $this->assertSame(3, (int) DB::table('collections')->where('id', $id)->value('totalfiles'));
+    }
+
+    public function test_incomplete_collection_waits_while_the_delay_reset_runs(): void
+    {
+        $id = $this->nzbSplitCollection(
+            declaredFiles: 5,
+            presentFiles: 3,
+            createdAt: now()->subHours(3)->format('Y-m-d H:i:s'),
+            subject: '[1/5] "Some.Show.S01E01.1080p.WEB-DL-GRP.part1.rar" yEnc',
+        );
+
+        CollectionDelayReset::begin();
+        try {
+            $this->process(1);
+        } finally {
+            CollectionDelayReset::end();
+        }
+
+        $this->assertNotSame(
+            CollectionFileCheckStatus::Sized->value,
+            (int) DB::table('collections')->where('id', $id)->value('filecheck'),
+        );
+        $this->assertSame(5, (int) DB::table('collections')->where('id', $id)->value('totalfiles'));
+
+        // Once the reset is done the delay applies again.
+        $this->process(1);
+        $this->assertStatus($id, CollectionFileCheckStatus::Sized);
+    }
+
+    public function test_complete_collection_is_released_while_the_delay_reset_runs(): void
+    {
+        $id = $this->nzbSplitCollection(
+            declaredFiles: 3,
+            presentFiles: 3,
+            createdAt: now()->subHours(3)->format('Y-m-d H:i:s'),
+            subject: '[1/3] "Some.Show.S01E01.1080p.WEB-DL-GRP.part1.rar" yEnc',
+        );
+
+        CollectionDelayReset::begin();
+        try {
+            $this->process(1);
+        } finally {
+            CollectionDelayReset::end();
+        }
+
+        $this->assertStatus($id, CollectionFileCheckStatus::Sized);
     }
 
     public function test_nzb_split_hold_can_be_disabled(): void
