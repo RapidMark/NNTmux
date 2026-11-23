@@ -10,6 +10,7 @@ use App\Services\Binaries\BinariesConfig;
 use App\Services\CollectionCleanupService;
 use App\Services\Nzb\NzbCreationCandidateQuery;
 use App\Services\Nzb\NzbService;
+use App\Services\ReleaseCreationService;
 use App\Services\ReleaseImageService;
 use App\Services\ReleaseProcessingService;
 use App\Services\Releases\ReleaseManagementService;
@@ -392,11 +393,51 @@ class NzbCreationReliabilityTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    private function serviceWith(NzbService $nzb): ReleaseProcessingService
+    public function test_a_release_pass_builds_nzbs_inline_without_the_queue(): void
+    {
+        config(['nntmux.nzb_queue' => false]);
+        $this->insertRelease(1, 'a');
+        $nzb = new CountingNzbService;
+        $creation = FakeReleaseCreationService::make();
+
+        $pass = $this->serviceWith($nzb, $creation)->createReleasesAndNzbs(1);
+
+        $this->assertSame(1, $creation->calls);
+        $this->assertSame(1, $pass['nzbs']);
+        $this->assertSame([1], $nzb->built);
+    }
+
+    public function test_a_release_pass_leaves_nzbs_to_the_queue(): void
+    {
+        config(['nntmux.nzb_queue' => true, 'nntmux.nzb_queue_backlog' => 2]);
+        $this->insertRelease(1, 'a');
+        $nzb = new CountingNzbService;
+        $creation = FakeReleaseCreationService::make();
+
+        $pass = $this->serviceWith($nzb, $creation)->createReleasesAndNzbs(1);
+
+        $this->assertSame(1, $creation->calls);
+        $this->assertSame(0, $pass['nzbs']);
+        $this->assertSame([], $nzb->built);
+    }
+
+    public function test_a_release_pass_pauses_while_the_nzb_backlog_is_full(): void
+    {
+        config(['nntmux.nzb_queue' => true, 'nntmux.nzb_queue_backlog' => 2]);
+        $this->insertRelease(1, 'a');
+        $this->insertRelease(2, 'b');
+        $creation = FakeReleaseCreationService::make();
+
+        $this->assertNull($this->serviceWith(new CountingNzbService, $creation)->createReleasesAndNzbs('1'));
+        $this->assertSame(0, $creation->calls);
+    }
+
+    private function serviceWith(NzbService $nzb, ?ReleaseCreationService $creation = null): ReleaseProcessingService
     {
         return (new ReleaseProcessingService(
             nzb: $nzb,
             releaseManagement: new DatabaseOnlyReleaseManagementService,
+            releaseCreationService: $creation,
             collectionCleanupService: app(CollectionCleanupService::class),
         ))->setEchoCLI(false);
     }
@@ -574,6 +615,23 @@ class NzbCreationReliabilityTest extends TestCase
         putenv($key.'='.$value);
         $_ENV[$key] = $value;
         $_SERVER[$key] = $value;
+    }
+}
+
+class FakeReleaseCreationService extends ReleaseCreationService
+{
+    public int $calls = 0;
+
+    public static function make(): self
+    {
+        return (new \ReflectionClass(self::class))->newInstanceWithoutConstructor();
+    }
+
+    public function createReleases(int|string|null $groupID, int $limit, bool $echoCLI): array
+    {
+        $this->calls++;
+
+        return ['added' => 0, 'dupes' => 0];
     }
 }
 

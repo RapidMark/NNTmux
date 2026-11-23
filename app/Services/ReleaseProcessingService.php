@@ -274,24 +274,17 @@ final class ReleaseProcessingService
     ): array {
         $totals = ['releases' => 0, 'nzbs' => 0, 'dupes' => 0, 'iterations' => 0];
         $limit = $this->settings->releaseCreationLimit;
-        // With the NZB queue on, queue workers build the NZBs (nzb:dispatch);
-        // this loop only forms releases, and stops while the group's NZBs lag.
-        $nzbQueue = (bool) config('nntmux.nzb_queue');
 
         do {
             $totals['iterations']++;
 
-            if ($nzbQueue && ($waiting = $this->nzbBacklogFull($normalizedGroupId)) !== null) {
-                $this->outputStat('Release creation paused, releases waiting for an NZB', $waiting);
-
+            $pass = $this->createReleasesAndNzbs($normalizedGroupId);
+            if ($pass === null) {
                 break;
             }
-
-            $result = $this->createReleases($normalizedGroupId);
+            ['result' => $result, 'nzbs' => $nzbFilesAdded] = $pass;
             $totals['releases'] += $result->added;
             $totals['dupes'] += $result->dupes;
-
-            $nzbFilesAdded = $nzbQueue ? 0 : $this->createNZBs($normalizedGroupId);
             $totals['nzbs'] += $nzbFilesAdded;
 
             $this->categorizeReleases($categorize, $normalizedGroupId);
@@ -302,6 +295,30 @@ final class ReleaseProcessingService
         } while ($shouldContinue);
 
         return $totals;
+    }
+
+    /**
+     * One pass of release creation for a group: forms releases, then builds their
+     * NZBs unless queue workers do (nntmux.nzb_queue). With the queue on, null
+     * while the group is paused because too many of its releases wait for an NZB.
+     *
+     * @return array{result: ReleaseCreationResult, nzbs: int}|null
+     */
+    public function createReleasesAndNzbs(int|string|null $groupID): ?array
+    {
+        if (! config('nntmux.nzb_queue')) {
+            $result = $this->createReleases($groupID);
+
+            return ['result' => $result, 'nzbs' => $this->createNZBs($groupID)];
+        }
+
+        if (($waiting = $this->nzbBacklogFull($this->normalizeGroupId($groupID))) !== null) {
+            $this->outputStat('Release creation paused, releases waiting for an NZB', $waiting);
+
+            return null;
+        }
+
+        return ['result' => $this->createReleases($groupID), 'nzbs' => 0];
     }
 
     /**
@@ -849,15 +866,12 @@ final class ReleaseProcessingService
     }
 
     /**
-     * Create NZB files from releases that don't have them yet.
-     *
-     * @throws Throwable
-     */
-    /**
      * Build the NZBs of releases that have none, claiming up to $limit of them
      * (default: the release creation limit). With a $deadline (a microtime(true)
      * value) no NZB is started after it; the releases left are handed back
      * unclaimed for the next run.
+     *
+     * @throws Throwable
      */
     public function createNZBs(int|string|null $groupID, ?int $limit = null, ?float $deadline = null): int
     {

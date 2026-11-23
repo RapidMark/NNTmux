@@ -73,10 +73,8 @@ class ProcessReleasesCommand extends Command
         $this->releaseProcessingService->deleteUnwantedCollections($groupID);
 
         do {
-            $result = $this->releaseProcessingService->createReleases($groupID);
-            $nzbFilesAdded = $this->releaseProcessingService->createNZBs($groupID);
-
-            $shouldContinue = $result->total() >= $limit || $nzbFilesAdded >= $limit;
+            $pass = $this->releaseProcessingService->createReleasesAndNzbs($groupID);
+            $shouldContinue = $pass !== null && ($pass['result']->total() >= $limit || $pass['nzbs'] >= $limit);
         } while ($shouldContinue);
 
         $this->releaseProcessingService->deleteCollections($groupID);
