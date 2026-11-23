@@ -1,6 +1,14 @@
 #!/command/with-contenv bash
 if [ ! -d /config/mariadb/mysql ]; then
     echo "Initialising MariaDB data directory"
+    # On btrfs, copy-on-write makes every page write slow. It can only be
+    # turned off while the folder is empty, and not through Unraid's FUSE
+    # shares (/mnt/user), so map /config to the pool itself.
+    mkdir -p /config/mariadb
+    if [ "$(stat -f -c %T /config/mariadb)" = btrfs ] && [ -z "$(ls -A /config/mariadb)" ]; then
+        chattr +C /config/mariadb && echo "Copy-on-write turned off for the MariaDB data directory"
+    fi
+    chown www-data:www-data /config/mariadb
     mariadb-install-db --user=www-data --datadir=/config/mariadb --skip-test-db >/dev/null
 fi
 exec s6-setuidgid www-data mariadbd \

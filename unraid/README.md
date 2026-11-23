@@ -36,6 +36,27 @@ Install from Community Apps, or add a container with template URL `https://raw.g
 MariaDB stops in seconds: it writes its redo log and replays it on the next start, while startup waits for it.
 Unraid stops containers with its own Docker timeout (10 s by default), not the template's `--stop-timeout`.
 
+### Database on a btrfs pool
+
+On btrfs, copy-on-write turns every MariaDB page write into a new extent, so a large database
+flushes slowly and writes stall. A new install turns copy-on-write off for `/config/mariadb`
+when `/config` is mapped to the pool itself (`/mnt/cache/appdata/nntmux`, or an exclusive share).
+Through `/mnt/user/...` the FUSE layer does not allow it.
+
+To convert an existing database, stop the container, copy the folder into one with
+copy-on-write off and swap it in (needs free space for a second copy):
+
+```
+cd /mnt/cache/appdata/nntmux
+mkdir mariadb.nocow && chattr +C mariadb.nocow
+chown --reference=mariadb mariadb.nocow && chmod --reference=mariadb mariadb.nocow
+cp -a --reflink=never mariadb/. mariadb.nocow/
+mv mariadb mariadb.old && mv mariadb.nocow mariadb
+```
+
+Start the container, and delete `mariadb.old` once it runs cleanly. `lsattr -d mariadb` shows `C` when it worked.
+`DB_INNODB_LOG_FILE_SIZE` (default 4G) sets the redo log; a bigger log rides out write bursts.
+
 ## Building
 
 ```
