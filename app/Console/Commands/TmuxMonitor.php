@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Enums\TmuxMode;
-use App\Services\CollectionCleanupService;
+use App\Services\CollectionDelayHold;
 use App\Services\Configuration\ConfigurationProvider;
 use App\Services\Configuration\ProcessingRuntimeStateRepository;
 use App\Services\Monitoring\TmuxMetricsSnapshot;
@@ -143,19 +143,8 @@ class TmuxMonitor extends Command
      */
     private function resetOldCollections(): void
     {
-        cli()->header('Resetting expired collections...');
-
-        try {
-            $count = app(CollectionCleanupService::class)->restartCollectionDelay();
-
-            if ($count > 0) {
-                $this->info("✅ Reset {$count} collections");
-            } else {
-                $this->info('✅ No collections needed resetting');
-            }
-        } catch (\Exception $e) {
-            $this->error('Failed to reset collections: '.$e->getMessage());
-        }
+        CollectionDelayHold::resume();
+        $this->info('✅ Incomplete collections held for one collection delay');
     }
 
     /**

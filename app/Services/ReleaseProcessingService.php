@@ -500,12 +500,12 @@ final class ReleaseProcessingService
      */
     /**
      * Collections created before this are cut to the files present and released.
-     * While the startup reset of the delays runs, their timestamps still predate the
-     * downtime, so nothing is cut; complete collections are released as usual.
+     * For one delay after processing resumes nothing is cut (CollectionDelayHold);
+     * complete collections are released as usual.
      */
     private function staleCutoff(): Carbon
     {
-        return CollectionDelayReset::running()
+        return CollectionDelayHold::active($this->settings->collectionDelayTime)
             ? now()->subYears(100)
             : now()->subHours($this->settings->collectionDelayTime);
     }
@@ -531,7 +531,7 @@ final class ReleaseProcessingService
             $statuses,
         );
 
-        // Rows past the delay are reconciled even while the startup reset runs:
+        // Rows past the delay are reconciled even while the startup hold is on:
         // complete ones are released then, only the cut to the files present waits
         // (staleCutoff() in the update below).
         $cutoff = now()->subHours($this->settings->collectionDelayTime);
