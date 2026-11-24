@@ -905,7 +905,23 @@ final class ReleaseProcessingService
 
                     continue;
                 }
+                $attempt = $this->nextNzbCreationAttempt($release);
                 try {
+                    // Every earlier attempt was cut off before it could record a failure,
+                    // e.g. the worker was killed at its timeout building a huge NZB.
+                    if ($attempt > self::NZB_CREATION_MAX_ATTEMPTS) {
+                        $this->deleteFailedNzbCreationRelease(
+                            $release,
+                            NzbCreationResult::transient('NZB creation did not finish in '.self::NZB_CREATION_MAX_ATTEMPTS.' attempts.'),
+                            $claimToken,
+                            $attempt - 1,
+                        );
+                        $deletedCount++;
+
+                        continue;
+                    }
+                    $this->recordNzbCreationStart($release, $attempt);
+
                     $result = $this->nzb->createNzbForRelease($release);
                     if ($result->success) {
                         $nzbCount++;
@@ -913,22 +929,22 @@ final class ReleaseProcessingService
                         continue;
                     }
 
-                    if ($this->shouldDeleteFailedNzbCreation($release, $result)) {
-                        $this->deleteFailedNzbCreationRelease($release, $result, $claimToken);
+                    if ($this->shouldDeleteFailedNzbCreation($result, $attempt)) {
+                        $this->deleteFailedNzbCreationRelease($release, $result, $claimToken, $attempt);
                         $deletedCount++;
 
                         continue;
                     }
 
-                    $this->recordNzbCreationRetry($release, $result);
+                    $this->recordNzbCreationRetry($release, $result, $attempt);
                     $retryCount++;
                 } catch (Throwable $e) {
                     $result = NzbCreationResult::transient('Unexpected NZB creation failure: '.$e->getMessage());
-                    if ($this->shouldDeleteFailedNzbCreation($release, $result)) {
-                        $this->deleteFailedNzbCreationRelease($release, $result, $claimToken);
+                    if ($this->shouldDeleteFailedNzbCreation($result, $attempt)) {
+                        $this->deleteFailedNzbCreationRelease($release, $result, $claimToken, $attempt);
                         $deletedCount++;
                     } else {
-                        $this->recordNzbCreationRetry($release, $result);
+                        $this->recordNzbCreationRetry($release, $result, $attempt);
                         $retryCount++;
                     }
                 } finally {
@@ -947,7 +963,7 @@ final class ReleaseProcessingService
         return $nzbCount;
     }
 
-    private function shouldDeleteFailedNzbCreation(Release $release, NzbCreationResult $result): bool
+    private function shouldDeleteFailedNzbCreation(NzbCreationResult $result, int $attempt): bool
     {
         if ($result->isDeterministicFailure()) {
             return true;
@@ -957,7 +973,7 @@ final class ReleaseProcessingService
             return false;
         }
 
-        return $this->nextNzbCreationAttempt($release) >= self::NZB_CREATION_MAX_ATTEMPTS;
+        return $attempt >= self::NZB_CREATION_MAX_ATTEMPTS;
     }
 
     private function nextNzbCreationAttempt(Release $release): int
@@ -973,9 +989,25 @@ final class ReleaseProcessingService
         return ($failureState instanceof ReleaseNzbCreationFailure ? $failureState->attempts : 0) + 1;
     }
 
-    private function recordNzbCreationRetry(Release $release, NzbCreationResult $result): void
+    /**
+     * Counts the attempt before the build starts, so a build that never returns
+     * (the worker killed at its timeout) still uses up one of the attempts.
+     * A successful build removes the row again.
+     */
+    private function recordNzbCreationStart(Release $release, int $attempt): void
     {
-        $nextAttempt = $this->nextNzbCreationAttempt($release);
+        if (! NzbCreationCandidateQuery::supportsFailureState()) {
+            return;
+        }
+
+        ReleaseNzbCreationFailure::query()->updateOrCreate(
+            ['releases_id' => (int) $release->id],
+            ['attempts' => $attempt, 'last_error' => 'NZB creation did not finish.'],
+        );
+    }
+
+    private function recordNzbCreationRetry(Release $release, NzbCreationResult $result, int $nextAttempt): void
+    {
         $failure = ReleaseNzbCreationFailure::query()->updateOrCreate(
             ['releases_id' => (int) $release->id],
             [
@@ -995,14 +1027,14 @@ final class ReleaseProcessingService
         ]);
     }
 
-    private function deleteFailedNzbCreationRelease(Release $release, NzbCreationResult $result, string $claimToken): void
+    private function deleteFailedNzbCreationRelease(Release $release, NzbCreationResult $result, string $claimToken, int $attempt): void
     {
         Log::channel('nzb_creation')->warning('Deleting release after NZB creation failure', [
             'release_id' => $release->id,
             'guid' => $release->guid,
             'failure_type' => $result->failureType,
             'reason' => $result->reason,
-            'attempt' => $this->nextNzbCreationAttempt($release),
+            'attempt' => $attempt,
             'max_attempts' => self::NZB_CREATION_MAX_ATTEMPTS,
         ]);
 

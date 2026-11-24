@@ -233,6 +233,36 @@ class NzbCreationReliabilityTest extends TestCase
         $this->assertSame(3, $nzbCreationLogger->warnings[0]['context']['attempt']);
     }
 
+    public function test_an_attempt_is_counted_before_the_build_starts(): void
+    {
+        $this->insertRelease(1, 'a', attempts: 1);
+        $nzb = new AttemptRecordingNzbService;
+
+        $this->serviceWith($nzb)->createNZBs(null);
+
+        // A worker killed during the build would leave exactly this behind.
+        $this->assertSame([2], $nzb->attemptsSeen);
+    }
+
+    public function test_a_release_whose_builds_never_finish_is_deleted_after_the_last_attempt(): void
+    {
+        Log::partialMock();
+        $nzbCreationLogger = new RecordingNzbCreationLogger;
+        Log::shouldReceive('channel')->once()->with('nzb_creation')->andReturn($nzbCreationLogger);
+
+        $this->insertRelease(1, 'a', attempts: 3);
+        $this->insertCbp(200, 2000, 1);
+        $nzb = new CountingNzbService;
+
+        $this->assertSame(0, $this->serviceWith($nzb)->createNZBs(null));
+
+        $this->assertSame([], $nzb->built);
+        $this->assertSame(0, DB::table('releases')->count());
+        $this->assertSame(0, DB::table('collections')->count());
+        $this->assertSame('Deleting release after NZB creation failure', $nzbCreationLogger->warnings[0]['message']);
+        $this->assertSame(3, $nzbCreationLogger->warnings[0]['context']['attempt']);
+    }
+
     public function test_writer_classifies_final_rename_failure_as_transient_without_final_file(): void
     {
         $this->insertRelease(1, 'd');
@@ -632,6 +662,24 @@ class FakeReleaseCreationService extends ReleaseCreationService
         $this->calls++;
 
         return ['added' => 0, 'dupes' => 0];
+    }
+}
+
+class AttemptRecordingNzbService extends NzbService
+{
+    /** @var list<int> */
+    public array $attemptsSeen = [];
+
+    public function __construct()
+    {
+        parent::__construct(app(CollectionCleanupService::class));
+    }
+
+    public function createNzbForRelease(Release $release): NzbCreationResult
+    {
+        $this->attemptsSeen[] = (int) DB::table('release_nzb_creation_failures')->where('releases_id', $release->id)->value('attempts');
+
+        return NzbCreationResult::success('/dev/null', []);
     }
 }
 
